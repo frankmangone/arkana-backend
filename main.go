@@ -2,21 +2,19 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 
+	"arkana/internal/user"
 	"github.com/gorilla/mux"
 	"github.com/pressly/goose/v3"
 )
 
-var db *sql.DB
-
 func main() {
 	log.Println("Starting server...")
 
-	var err error
-	db, err = initDB("blog.db")
+	// Initialize database
+	db, err := initDB("blog.db")
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
@@ -28,19 +26,28 @@ func main() {
 		log.Fatal("Failed to run migrations:", err)
 	}
 
+	// Initialize router
 	router := mux.NewRouter()
 
-	// Sample GET route
-	router.HandleFunc("/api/users/{id}", handleGetUser).Methods("GET")
+	// Register features
+	userService := user.NewService(db)
+	userHandler := user.NewHandler(userService)
+	userHandler.RegisterRoutes(router)
 
 	log.Println("Server starting on :8080")
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
 
-func handleGetUser(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	userID := vars["id"]
+func initDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, err
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"id": "%s", "name": "User %s"}`, userID, userID)
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	log.Println("Database connection established")
+	return db, nil
 }
