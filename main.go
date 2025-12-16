@@ -1,20 +1,35 @@
 package main
 
 import (
-	"database/sql"
 	"log"
 	"net/http"
 
+	"arkana/config"
+	"arkana/internal/auth"
 	"arkana/internal/user"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 	"github.com/pressly/goose/v3"
 )
 
 func main() {
 	log.Println("Starting server...")
 
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
+
+	// Load configuration
+	cfg := config.Load()
+
+	// Validate critical configuration
+	if cfg.JWTSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+
 	// Initialize database
-	db, err := initDB("blog.db")
+	db, err := initDB(cfg.DatabasePath)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
@@ -29,25 +44,17 @@ func main() {
 	// Initialize router
 	router := mux.NewRouter()
 
-	// Register features
+	// Register auth feature
+	authService := auth.NewService(db, cfg)
+	authMiddleware := auth.NewMiddleware(cfg.JWTSecret)
+	authHandler := auth.NewHandler(authService, authMiddleware)
+	authHandler.RegisterRoutes(router)
+
+	// Register user feature
 	userService := user.NewService(db)
 	userHandler := user.NewHandler(userService)
 	userHandler.RegisterRoutes(router)
 
-	log.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", router))
-}
-
-func initDB(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := db.Ping(); err != nil {
-		return nil, err
-	}
-
-	log.Println("Database connection established")
-	return db, nil
+	log.Println("Server starting on :8082")
+	log.Fatal(http.ListenAndServe(":8082", router))
 }
