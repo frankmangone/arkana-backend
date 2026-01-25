@@ -4,28 +4,22 @@ import (
 	"log"
 	"net/http"
 
-	"arkana/config"
-	"arkana/internal/auth"
-	"arkana/internal/user"
+	"arkana/auth"
+	"arkana/src/config"
+	"arkana/user"
+
 	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
 	"github.com/pressly/goose/v3"
 )
 
 func main() {
 	log.Println("Starting server...")
 
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
-	}
+	// Load and validate configuration
+	cfg, err := config.LoadAndValidate()
 
-	// Load configuration
-	cfg := config.Load()
-
-	// Validate critical configuration
-	if cfg.JWTSecret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
+	if err != nil {
+		log.Fatal("Configuration error:", err)
 	}
 
 	// Initialize database
@@ -44,16 +38,9 @@ func main() {
 	// Initialize router
 	router := mux.NewRouter()
 
-	// Register auth feature
-	authService := auth.NewService(db, cfg)
-	authMiddleware := auth.NewMiddleware(cfg.JWTSecret)
-	authHandler := auth.NewHandler(authService, authMiddleware)
-	authHandler.RegisterRoutes(router)
-
-	// Register user feature
-	userService := user.NewService(db)
-	userHandler := user.NewHandler(userService)
-	userHandler.RegisterRoutes(router)
+	// Initialize modules
+	auth.Initialize(router, db, cfg)
+	user.Initialize(router, db)
 
 	log.Println("Server starting on :8082")
 	log.Fatal(http.ListenAndServe(":8082", router))
