@@ -1,8 +1,9 @@
 package user
 
 import (
-	"arkana/user/handlers"
-	"arkana/user/services"
+	"arkana/features/user/handlers"
+	usermodels "arkana/features/user/models"
+	"arkana/features/user/services"
 	"database/sql"
 
 	"github.com/gorilla/mux"
@@ -19,3 +20,7 @@ func Initialize(router *mux.Router, db *sql.DB) {
 	// Register routes
 	userHandler.RegisterRoutes(router)
 }
+
+// Re-export user model for cleaner imports
+// This allows importing "arkana/features/user" and using types like user.User
+type User = usermodels.User

@@ -4,11 +4,9 @@ import (
 	"log"
 	"net/http"
 
-	"arkana/auth"
-	"arkana/src/config"
-	"arkana/user"
+	"arkana/config"
+	"arkana/router"
 
-	"github.com/gorilla/mux"
 	"github.com/pressly/goose/v3"
 )
 
@@ -35,12 +33,8 @@ func main() {
 		log.Fatal("Failed to run migrations:", err)
 	}
 
-	// Initialize router
-	router := mux.NewRouter()
-
-	// Initialize modules
-	auth.Initialize(router, db, cfg)
-	user.Initialize(router, db)
+	// Setup router with all routes
+	router := router.Setup(db, cfg)
 
 	log.Println("Server starting on :8082")
 	log.Fatal(http.ListenAndServe(":8082", router))

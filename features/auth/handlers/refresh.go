@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"arkana/auth/models"
+	"arkana/features/auth/models"
 	"encoding/json"
 	"net/http"
 )

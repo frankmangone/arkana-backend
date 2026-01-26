@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"arkana/auth/models"
+	"arkana/features/auth"
 	"encoding/json"
 	"net/http"
 )
@@ -19,20 +19,20 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid request"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Invalid request"})
 		return
 	}
 
 	if req.Email == "" || req.Username == "" || req.Password == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Email, username, and password are required"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Email, username, and password are required"})
 		return
 	}
 
 	user, err := h.service.Create(req.Email, req.Username, req.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to create user"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Failed to create user"})
 		return
 	}
 

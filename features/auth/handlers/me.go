@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"arkana/auth/middlewares"
-	"arkana/auth/models"
+	"arkana/features/auth/middlewares"
+	"arkana/features/auth/models"
 	"encoding/json"
 	"net/http"
 )

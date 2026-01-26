@@ -1,8 +1,8 @@
 package services
 
 import (
-	"arkana/auth/models"
-	"arkana/src/config"
+	usermodels "arkana/features/user/models"
+	"arkana/config"
 	"database/sql"
 	"errors"
 	"time"
@@ -20,7 +20,7 @@ func NewAuthService(db *sql.DB, cfg *config.Config) *AuthService {
 }
 
 // Register creates a new user with email/password authentication
-func (s *AuthService) Register(email, username, password string) (*models.User, error) {
+func (s *AuthService) Register(email, username, password string) (*usermodels.User, error) {
 	// Hash the password
 	passwordHash, err := HashPassword(password)
 	if err != nil {
@@ -46,7 +46,7 @@ func (s *AuthService) Register(email, username, password string) (*models.User, 
 }
 
 // Login authenticates a user with email/password and returns tokens
-func (s *AuthService) Login(email, password string) (accessToken, refreshToken string, user *models.User, err error) {
+func (s *AuthService) Login(email, password string) (accessToken, refreshToken string, user *usermodels.User, err error) {
 	// Get user by email and auth provider
 	user, err = s.GetByEmailAndProvider(email, "email")
 	if err != nil {
@@ -158,8 +158,8 @@ func (s *AuthService) RevokeRefreshToken(refreshToken string) error {
 }
 
 // GetByID retrieves a user by ID
-func (s *AuthService) GetByID(id int) (*models.User, error) {
-	user := &models.User{}
+func (s *AuthService) GetByID(id int) (*usermodels.User, error) {
+	user := &usermodels.User{}
 	err := s.db.QueryRow(`
 		SELECT id, email, username, password_hash, auth_provider, provider_user_id,
 		       email_verified, avatar_url, created_at, updated_at
@@ -180,8 +180,8 @@ func (s *AuthService) GetByID(id int) (*models.User, error) {
 }
 
 // GetByEmailAndProvider retrieves a user by email and auth provider
-func (s *AuthService) GetByEmailAndProvider(email, provider string) (*models.User, error) {
-	user := &models.User{}
+func (s *AuthService) GetByEmailAndProvider(email, provider string) (*usermodels.User, error) {
+	user := &usermodels.User{}
 	err := s.db.QueryRow(`
 		SELECT id, email, username, password_hash, auth_provider, provider_user_id,
 		       email_verified, avatar_url, created_at, updated_at
@@ -203,8 +203,8 @@ func (s *AuthService) GetByEmailAndProvider(email, provider string) (*models.Use
 }
 
 // GetUserByProviderID retrieves a user by provider and provider user ID
-func (s *AuthService) GetUserByProviderID(provider, providerUserID string) (*models.User, error) {
-	user := &models.User{}
+func (s *AuthService) GetUserByProviderID(provider, providerUserID string) (*usermodels.User, error) {
+	user := &usermodels.User{}
 	err := s.db.QueryRow(`
 		SELECT id, email, username, password_hash, auth_provider, provider_user_id,
 		       email_verified, avatar_url, created_at, updated_at
@@ -226,7 +226,7 @@ func (s *AuthService) GetUserByProviderID(provider, providerUserID string) (*mod
 }
 
 // CreateOIDCUser creates a new user from OIDC authentication
-func (s *AuthService) CreateOIDCUser(email, username, provider, providerUserID, avatarURL string) (*models.User, error) {
+func (s *AuthService) CreateOIDCUser(email, username, provider, providerUserID, avatarURL string) (*usermodels.User, error) {
 	var avatarURLPtr *string
 	if avatarURL != "" {
 		avatarURLPtr = &avatarURL
@@ -250,7 +250,7 @@ func (s *AuthService) CreateOIDCUser(email, username, provider, providerUserID, 
 }
 
 // GenerateTokensForUser generates access and refresh tokens for a user
-func (s *AuthService) GenerateTokensForUser(user *models.User) (accessToken, refreshToken string, err error) {
+func (s *AuthService) GenerateTokensForUser(user *usermodels.User) (accessToken, refreshToken string, err error) {
 	// Generate access token
 	accessToken, err = GenerateAccessToken(user.ID, user.Email, s.cfg.JWTSecret, s.cfg.JWTAccessExpiry)
 	if err != nil {

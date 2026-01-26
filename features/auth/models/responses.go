@@ -1,10 +1,12 @@
 package models
 
+import usermodels "arkana/features/user/models"
+
 // AuthResponse represents an authentication response with tokens
 type AuthResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	User         *User  `json:"user"`
+	AccessToken  string            `json:"access_token"`
+	RefreshToken string            `json:"refresh_token"`
+	User         *usermodels.User `json:"user"`
 }
 
 // RefreshResponse represents a refresh token response

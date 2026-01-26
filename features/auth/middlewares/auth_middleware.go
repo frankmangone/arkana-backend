@@ -1,7 +1,7 @@
 package middlewares
 
 import (
-	"arkana/auth/services"
+	"arkana/features/auth/services"
 	"context"
 	"encoding/json"
 	"net/http"

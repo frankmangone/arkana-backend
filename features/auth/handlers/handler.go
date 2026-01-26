@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"arkana/auth/middlewares"
-	"arkana/auth/services"
+	"arkana/features/auth/middlewares"
+	"arkana/features/auth/services"
 	"net/http"
 
 	"github.com/gorilla/mux"

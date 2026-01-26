@@ -1,7 +1,7 @@
 package services
 
 import (
-	"arkana/auth/models"
+	"arkana/features/user/models"
 	"database/sql"
 )
 

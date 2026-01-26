@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"arkana/auth/models"
+	"arkana/features/auth"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -15,20 +15,20 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid user ID"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Invalid user ID"})
 		return
 	}
 
 	user, err := h.service.GetByID(id)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Database error"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Database error"})
 		return
 	}
 
 	if user == nil {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "User not found"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "User not found"})
 		return
 	}
 

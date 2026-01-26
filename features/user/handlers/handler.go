@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"arkana/user/services"
+	"arkana/features/user/services"
 
 	"github.com/gorilla/mux"
 )
