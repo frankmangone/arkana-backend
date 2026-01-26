@@ -3,12 +3,13 @@ package handlers
 import (
 	"arkana/features/auth/middlewares"
 	"arkana/features/auth/models"
+	"arkana/features/auth/services"
 	"encoding/json"
 	"net/http"
 )
 
 // GetCurrentUser handles GET /api/auth/me
-func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+func GetCurrentUser(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
 	// Get user ID from context (set by middleware)
 	userID, ok := middlewares.GetUserIDFromContext(r.Context())
 	if !ok {
@@ -18,7 +19,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get user from database
-	user, err := h.authService.GetByID(userID)
+	user, err := authService.GetByID(userID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to retrieve user"})
@@ -34,4 +35,11 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(user)
+}
+
+// GetCurrentUserHandler returns an http.HandlerFunc that handles getting current user
+func GetCurrentUserHandler(authService *services.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		GetCurrentUser(w, r, authService)
+	}
 }

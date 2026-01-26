@@ -1,2 +1,4 @@
 .claude/
 .env
+*.md
+!README.md

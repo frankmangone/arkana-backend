@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"arkana/features/auth/models"
+	"arkana/features/auth/services"
 	"encoding/json"
 	"net/http"
 )
 
 // Login handles POST /api/auth/login
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+func Login(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -23,7 +24,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authenticate user
-	accessToken, refreshToken, user, err := h.authService.Login(req.Email, req.Password)
+	accessToken, refreshToken, user, err := authService.Login(req.Email, req.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid credentials"})
@@ -37,4 +38,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken,
 		User:         user,
 	})
+}
+
+// LoginHandler returns an http.HandlerFunc that handles user login
+func LoginHandler(authService *services.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		Login(w, r, authService)
+	}
 }

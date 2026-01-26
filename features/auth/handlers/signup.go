@@ -2,13 +2,14 @@ package handlers
 
 import (
 	"arkana/features/auth/models"
+	"arkana/features/auth/services"
 	"encoding/json"
 	"net/http"
 	"regexp"
 )
 
 // Signup handles POST /api/auth/signup
-func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
+func Signup(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
 	var req models.SignupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -46,7 +47,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Register user
-	user, err := h.authService.Register(req.Email, req.Username, req.Password)
+	user, err := authService.Register(req.Email, req.Username, req.Password)
 	if err != nil {
 		// Check for duplicate email
 		if err.Error() == "UNIQUE constraint failed: users.email" {
@@ -60,7 +61,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate tokens
-	accessToken, refreshToken, err := h.authService.GenerateTokensForUser(user)
+	accessToken, refreshToken, err := authService.GenerateTokensForUser(user)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to generate tokens"})
@@ -74,4 +75,11 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken,
 		User:         user,
 	})
+}
+
+// SignupHandler returns an http.HandlerFunc that handles user signup
+func SignupHandler(authService *services.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		Signup(w, r, authService)
+	}
 }

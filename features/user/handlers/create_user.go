@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"arkana/features/auth"
+	"arkana/features/user/services"
 	"encoding/json"
 	"net/http"
 )
@@ -14,7 +15,7 @@ type CreateUserRequest struct {
 }
 
 // CreateUser handles POST /api/users
-func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+func CreateUser(w http.ResponseWriter, r *http.Request, service *services.UserService) {
 	var req CreateUserRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -29,7 +30,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.Create(req.Email, req.Username, req.Password)
+	user, err := service.Create(req.Email, req.Username, req.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Failed to create user"})
@@ -39,4 +40,11 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(user)
+}
+
+// CreateUserHandler returns an http.HandlerFunc that handles user creation
+func CreateUserHandler(service *services.UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		CreateUser(w, r, service)
+	}
 }
