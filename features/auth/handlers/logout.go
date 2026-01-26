@@ -16,9 +16,10 @@ func Logout(w http.ResponseWriter, r *http.Request, authService *services.AuthSe
 		return
 	}
 
-	if req.RefreshToken == "" {
+	// Validate request
+	if err := models.ValidateRequest(req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Refresh token is required"})
+		json.NewEncoder(w).Encode(models.ErrorResponse{Error: err.Error()})
 		return
 	}
 

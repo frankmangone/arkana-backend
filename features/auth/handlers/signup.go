@@ -5,7 +5,6 @@ import (
 	"arkana/features/auth/services"
 	"encoding/json"
 	"net/http"
-	"regexp"
 )
 
 // Signup handles POST /api/auth/signup
@@ -17,32 +16,10 @@ func Signup(w http.ResponseWriter, r *http.Request, authService *services.AuthSe
 		return
 	}
 
-	// Validate input
-	if req.Email == "" || req.Username == "" || req.Password == "" {
+	// Validate request
+	if err := models.ValidateRequest(req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Email, username, and password are required"})
-		return
-	}
-
-	// Validate email format
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	if !emailRegex.MatchString(req.Email) {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid email format"})
-		return
-	}
-
-	// Validate username
-	if len(req.Username) < 3 || len(req.Username) > 30 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Username must be between 3 and 30 characters"})
-		return
-	}
-
-	// Validate password
-	if len(req.Password) < 8 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Password must be at least 8 characters"})
+		json.NewEncoder(w).Encode(models.ErrorResponse{Error: err.Error()})
 		return
 	}
 

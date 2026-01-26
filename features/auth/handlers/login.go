@@ -16,10 +16,10 @@ func Login(w http.ResponseWriter, r *http.Request, authService *services.AuthSer
 		return
 	}
 
-	// Validate input
-	if req.Email == "" || req.Password == "" {
+	// Validate request
+	if err := models.ValidateRequest(req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Email and password are required"})
+		json.NewEncoder(w).Encode(models.ErrorResponse{Error: err.Error()})
 		return
 	}
 
