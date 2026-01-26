@@ -7,9 +7,15 @@ import (
 	"net/http"
 )
 
-// Login handles POST /api/auth/login
+// LoginRequest represents a login request
+type LoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
+
+// Login handles POST /auth/login
 func Login(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
-	var req models.LoginRequest
+	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid request format"})

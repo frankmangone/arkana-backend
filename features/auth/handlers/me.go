@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-// GetCurrentUser handles GET /api/auth/me
+// GetCurrentUser handles GET /auth/me
 func GetCurrentUser(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
 	// Get user ID from context (set by middleware)
 	userID, ok := middlewares.GetUserIDFromContext(r.Context())

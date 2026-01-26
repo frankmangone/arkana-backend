@@ -276,3 +276,38 @@ func (s *AuthService) GenerateTokensForUser(user *usermodels.User) (accessToken,
 
 	return accessToken, refreshToken, nil
 }
+
+// FindOrCreateGoogleUser finds an existing user by Google ID or creates a new one
+func (s *AuthService) FindOrCreateGoogleUser(googleUserInfo *GoogleUserInfo) (*usermodels.User, error) {
+	// Try to find existing user by Google ID
+	user, err := s.GetUserByProviderID("google", googleUserInfo.Sub)
+	if err != nil {
+		return nil, err
+	}
+
+	if user != nil {
+		// Update last login time
+		_, err = s.db.Exec(`
+			UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?
+		`, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		return user, nil
+	}
+
+	// Create new user
+	// Use email as username if name is not available
+	username := googleUserInfo.Email
+	if googleUserInfo.GivenName != "" {
+		username = googleUserInfo.GivenName
+	}
+
+	return s.CreateOIDCUser(
+		googleUserInfo.Email,
+		username,
+		"google",
+		googleUserInfo.Sub,
+		googleUserInfo.Picture,
+	)
+}

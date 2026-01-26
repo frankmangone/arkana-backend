@@ -7,9 +7,16 @@ import (
 	"net/http"
 )
 
-// Signup handles POST /api/auth/signup
+// SignupRequest represents a signup request
+type SignupRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Username string `json:"username" validate:"required,min=3,max=30"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+// Signup handles POST /auth/signup
 func Signup(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
-	var req models.SignupRequest
+	var req SignupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid request format"})

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"arkana/features/auth"
+	authmodels "arkana/features/auth/models"
 	"arkana/features/user/services"
 	"encoding/json"
 	"net/http"
@@ -9,24 +10,25 @@ import (
 
 // CreateUserRequest represents a user creation request
 type CreateUserRequest struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Email    string `json:"email" validate:"required,email"`
+	Username string `json:"username" validate:"required,min=3,max=30"`
+	Password string `json:"password" validate:"required,min=8"`
 }
 
-// CreateUser handles POST /api/users
+// CreateUser handles POST /users
 func CreateUser(w http.ResponseWriter, r *http.Request, service *services.UserService) {
 	var req CreateUserRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Invalid request"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Invalid request format"})
 		return
 	}
 
-	if req.Email == "" || req.Username == "" || req.Password == "" {
+	// Validate request
+	if err := authmodels.ValidateRequest(req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: "Email, username, and password are required"})
+		json.NewEncoder(w).Encode(auth.ErrorResponse{Error: err.Error()})
 		return
 	}
 

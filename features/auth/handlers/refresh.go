@@ -7,9 +7,19 @@ import (
 	"net/http"
 )
 
-// Refresh handles POST /api/auth/refresh
+// RefreshRequest represents a refresh token request
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+// RefreshResponse represents a refresh token response
+type RefreshResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+// Refresh handles POST /auth/refresh
 func Refresh(w http.ResponseWriter, r *http.Request, authService *services.AuthService) {
-	var req models.RefreshRequest
+	var req RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid request format"})
@@ -33,7 +43,7 @@ func Refresh(w http.ResponseWriter, r *http.Request, authService *services.AuthS
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(models.RefreshResponse{
+	json.NewEncoder(w).Encode(RefreshResponse{
 		AccessToken: accessToken,
 	})
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// GetUser handles GET /api/users/{id}
+// GetUser handles GET /users/{id}
 func GetUser(w http.ResponseWriter, r *http.Request, userService *services.UserService) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
