@@ -14,9 +14,8 @@ var validate *validator.Validate
 func init() {
 	validate = validator.New()
 
-	// Register custom validators for time.Duration
+	// Register custom validator for time.Duration
 	validate.RegisterValidation("duration_min", validateDurationMin)
-	validate.RegisterValidation("duration_max", validateDurationMax)
 }
 
 // validateDurationMin validates that a duration is at least the specified minimum
@@ -33,22 +32,6 @@ func validateDurationMin(fl validator.FieldLevel) bool {
 	}
 
 	return duration >= minDuration
-}
-
-// validateDurationMax validates that a duration is at most the specified maximum
-func validateDurationMax(fl validator.FieldLevel) bool {
-	duration, ok := fl.Field().Interface().(time.Duration)
-	if !ok {
-		return false
-	}
-
-	maxDurationStr := fl.Param()
-	maxDuration, err := time.ParseDuration(maxDurationStr)
-	if err != nil {
-		return false
-	}
-
-	return duration <= maxDuration
 }
 
 // Validate validates all configuration fields using struct tags
@@ -98,8 +81,6 @@ func getValidationMessage(ve validator.FieldError) string {
 		return fmt.Sprintf("must be at least %s characters long", ve.Param())
 	case "duration_min":
 		return fmt.Sprintf("must be at least %s", ve.Param())
-	case "duration_max":
-		return fmt.Sprintf("must not exceed %s", ve.Param())
 	default:
 		return fmt.Sprintf("failed validation for tag '%s'", ve.Tag())
 	}

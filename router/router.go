@@ -2,8 +2,8 @@ package router
 
 import (
 	"arkana/config"
-	"arkana/features/auth"
-	"arkana/features/user"
+	"arkana/features/posts"
+	"arkana/features/wallet"
 	"database/sql"
 
 	"github.com/gorilla/mux"
@@ -13,14 +13,14 @@ import (
 func Setup(db *sql.DB, cfg *config.Config) *mux.Router {
 	router := mux.NewRouter()
 
-	// Initialize auth module
-	auth.Initialize(router, db, cfg)
+	// Apply CORS middleware to all routes
+	router.Use(CORS)
 
-	// Initialize feature modules
-	user.Initialize(router, db)
-	// Add more features as they are created:
-	// blog.Initialize(router, db)
-	// comments.Initialize(router, db)
+	// Initialize wallet module (returns auth middleware for other modules)
+	auth := wallet.Initialize(router, db, cfg)
+
+	// Initialize posts module
+	posts.Initialize(router, db, auth)
 
 	return router
 }
