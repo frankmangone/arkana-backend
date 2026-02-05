@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -13,31 +12,11 @@ var validate *validator.Validate
 
 func init() {
 	validate = validator.New()
-
-	// Register custom validator for time.Duration
-	validate.RegisterValidation("duration_min", validateDurationMin)
-}
-
-// validateDurationMin validates that a duration is at least the specified minimum
-func validateDurationMin(fl validator.FieldLevel) bool {
-	duration, ok := fl.Field().Interface().(time.Duration)
-	if !ok {
-		return false
-	}
-
-	minDurationStr := fl.Param()
-	minDuration, err := time.ParseDuration(minDurationStr)
-	if err != nil {
-		return false
-	}
-
-	return duration >= minDuration
 }
 
 // Validate validates all configuration fields using struct tags
 func (c *Config) Validate() error {
 	if err := validate.Struct(c); err != nil {
-		// Format validation errors with environment variable names
 		return formatValidationErrors(err)
 	}
 	return nil
@@ -77,10 +56,6 @@ func getValidationMessage(ve validator.FieldError) string {
 	switch ve.Tag() {
 	case "required":
 		return "is required"
-	case "min":
-		return fmt.Sprintf("must be at least %s characters long", ve.Param())
-	case "duration_min":
-		return fmt.Sprintf("must be at least %s", ve.Param())
 	default:
 		return fmt.Sprintf("failed validation for tag '%s'", ve.Tag())
 	}

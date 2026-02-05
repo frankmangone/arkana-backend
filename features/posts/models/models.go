@@ -24,7 +24,8 @@ type ToggleLikeResponse struct {
 	LikeCount int  `json:"like_count"`
 }
 
-type CreateCommentRequest struct {
-	Body     string `json:"body" validate:"required"`
-	ParentID *int   `json:"parent_id,omitempty"`
+type PostInfoResponse struct {
+	Path      string `json:"path"`
+	LikeCount int    `json:"like_count"`
+	Liked     bool   `json:"liked"` // Only meaningful if wallet address was provided
 }

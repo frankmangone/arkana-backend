@@ -5,17 +5,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestToggleLikeHandler(t *testing.T) {
 	db := setupTestDB(t)
-	router, ts := setupRouter(t, db)
-	walletID := insertTestWallet(t, db, "0xabc")
-	token, _ := ts.GenerateToken(walletID, "0xabc", "ethereum")
+	router := setupRouter(t, db)
+	key, addr := generateTestKey(t)
+	insertTestWallet(t, db, addr)
 
 	t.Run("likes a post", func(t *testing.T) {
-		req := authedRequest("POST", "/api/posts/test-path/like", token, nil)
+		jws := signJWS(t, key, map[string]any{"path": "test-path"})
+		req := httptest.NewRequest("POST", "/api/posts/like", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -34,7 +36,8 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("unlikes on second call", func(t *testing.T) {
-		req := authedRequest("POST", "/api/posts/test-path/like", token, nil)
+		jws := signJWS(t, key, map[string]any{"path": "test-path"})
+		req := httptest.NewRequest("POST", "/api/posts/like", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -49,7 +52,7 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/posts/test-path/like", nil)
+		req := httptest.NewRequest("POST", "/api/posts/like", strings.NewReader("not.a.jws"))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -61,13 +64,13 @@ func TestToggleLikeHandler(t *testing.T) {
 
 func TestCreateCommentHandler(t *testing.T) {
 	db := setupTestDB(t)
-	router, ts := setupRouter(t, db)
-	walletID := insertTestWallet(t, db, "0xabc")
-	token, _ := ts.GenerateToken(walletID, "0xabc", "ethereum")
+	router := setupRouter(t, db)
+	key, addr := generateTestKey(t)
+	insertTestWallet(t, db, addr)
 
 	t.Run("creates a comment", func(t *testing.T) {
-		body := models.CreateCommentRequest{Body: "great post"}
-		req := authedRequest("POST", "/api/posts/my-post/comments", token, body)
+		jws := signJWS(t, key, map[string]any{"path": "my-post", "body": "great post"})
+		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -86,16 +89,18 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("creates a reply", func(t *testing.T) {
-		body := models.CreateCommentRequest{Body: "parent"}
-		req := authedRequest("POST", "/api/posts/my-post/comments", token, body)
+		// Create parent
+		jws := signJWS(t, key, map[string]any{"path": "my-post", "body": "parent"})
+		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
 		var parent models.Comment
 		json.NewDecoder(rec.Body).Decode(&parent)
 
-		reply := models.CreateCommentRequest{Body: "reply", ParentID: &parent.ID}
-		req = authedRequest("POST", "/api/posts/my-post/comments", token, reply)
+		// Reply
+		jws = signJWS(t, key, map[string]any{"path": "my-post", "body": "reply", "parent_id": parent.ID})
+		req = httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
 		rec = httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -111,18 +116,18 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects empty body", func(t *testing.T) {
-		body := models.CreateCommentRequest{Body: ""}
-		req := authedRequest("POST", "/api/posts/my-post/comments", token, body)
+		jws := signJWS(t, key, map[string]any{"path": "my-post", "body": ""})
+		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rec.Code)
+			t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", nil)
+		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader("bad.jws.data"))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 

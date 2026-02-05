@@ -112,3 +112,50 @@ func (s *PostService) getByID(id int) (*models.Post, error) {
 	}
 	return &p, nil
 }
+
+// GetPostInfo returns post info by path, including whether a specific wallet has liked it.
+// If walletAddress is empty, liked will always be false.
+func (s *PostService) GetPostInfo(path string, walletAddress string) (*models.PostInfoResponse, error) {
+	var likeCount int
+	var postID int
+
+	err := s.db.QueryRow(
+		"SELECT id, like_count FROM posts WHERE path_identifier = ?",
+		path,
+	).Scan(&postID, &likeCount)
+
+	if err == sql.ErrNoRows {
+		// Post doesn't exist yet - return zeros
+		return &models.PostInfoResponse{
+			Path:      path,
+			LikeCount: 0,
+			Liked:     false,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if wallet has liked this post
+	var liked bool
+	if walletAddress != "" {
+		var exists int
+		err = s.db.QueryRow(`
+			SELECT 1 FROM post_likes pl
+			JOIN wallets w ON w.id = pl.wallet_id
+			WHERE pl.post_id = ? AND LOWER(w.address) = LOWER(?)
+		`, postID, walletAddress).Scan(&exists)
+
+		if err == nil {
+			liked = true
+		} else if err != sql.ErrNoRows {
+			return nil, err
+		}
+	}
+
+	return &models.PostInfoResponse{
+		Path:      path,
+		LikeCount: likeCount,
+		Liked:     liked,
+	}, nil
+}

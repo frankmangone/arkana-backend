@@ -1,49 +1,37 @@
 package router
 
 import (
+	"log"
 	"net/http"
-	"os"
-	"strings"
+
+	"github.com/gorilla/mux"
 )
 
-// CORS middleware handles Cross-Origin Resource Sharing
-func CORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get allowed origin from environment or use request origin
-		allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
-		origin := r.Header.Get("Origin")
+// CORSMiddleware returns a middleware that sets CORS headers using the configured origin.
+func CORSMiddleware(allowedOrigin string) mux.MiddlewareFunc {
+	if allowedOrigin == "" {
+		allowedOrigin = "*"
+	}
 
-		if allowedOrigin == "" {
-			// For development, allow common localhost origins
-			if origin == "http://localhost:3333" || origin == "http://localhost:3000" {
-				allowedOrigin = origin
-			} else if origin != "" {
-				// Allow the requesting origin if it's a localhost variant
-				if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "https://localhost:") {
-					allowedOrigin = origin
-				} else {
-					// For other origins, use wildcard (less secure but works for dev)
-					allowedOrigin = "*"
-				}
-			} else {
-				// If no origin header (e.g., same-origin request), allow all for dev
-				allowedOrigin = "*"
+	log.Printf("[CORS] Middleware initialized with allowed origin: %q", allowedOrigin)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			log.Printf("[CORS] %s %s | Origin: %q | Allowed: %q", r.Method, r.URL.Path, origin, allowedOrigin)
+
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Max-Age", "3600")
+
+			if r.Method == "OPTIONS" {
+				log.Printf("[CORS] Preflight request handled for %s", r.URL.Path)
+				w.WriteHeader(http.StatusOK)
+				return
 			}
-		}
 
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Max-Age", "3600") // Cache preflight for 1 hour
-
-		// Handle preflight requests
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Continue to next handler
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }

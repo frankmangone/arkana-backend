@@ -2,24 +2,21 @@ package config
 
 import (
 	"log"
-	"time"
 
 	"github.com/joho/godotenv"
 )
 
 // Config holds application configuration
 type Config struct {
-	SigningSecret string        `validate:"required,min=32" env:"SIGNING_SECRET"`
-	TokenExpiry   time.Duration `validate:"required,duration_min=1h" env:"TOKEN_EXPIRY"`
-	DatabasePath  string        `validate:"required" env:"DATABASE_PATH"`
+	DatabasePath      string `validate:"required" env:"DATABASE_PATH"`
+	CORSAllowedOrigin string `env:"CORS_ALLOWED_ORIGIN"`
 }
 
 // Load loads configuration from environment variables
 func Load() *Config {
 	return &Config{
-		SigningSecret: getEnv("SIGNING_SECRET", ""),
-		TokenExpiry:   getDuration("TOKEN_EXPIRY", 720*time.Hour),
-		DatabasePath:  getEnv("DATABASE_PATH", "blog.db"),
+		DatabasePath:      getEnv("DATABASE_PATH", "blog.db"),
+		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", "*"),
 	}
 }
 

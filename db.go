@@ -13,8 +13,12 @@ func initDB(dbPath string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Test connection
 	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	// WAL mode for better concurrent read/write performance
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, err
 	}
 

@@ -6,8 +6,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func RegisterRoutes(router *mux.Router, ws *services.WalletService, ts *services.TokenService) {
-	loginHandler := NewLoginHandler(ws, ts)
+func RegisterRoutes(router *mux.Router, ws *services.WalletService) {
+	loginHandler := NewLoginHandler(ws)
 
 	router.HandleFunc("/api/login", loginHandler.Login).Methods("POST")
 }
