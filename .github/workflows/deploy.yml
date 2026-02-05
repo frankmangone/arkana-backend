@@ -30,7 +30,7 @@ jobs:
           host: ${{ secrets.VULTR_HOST }}
           username: ${{ secrets.VULTR_USER }}
           key: ${{ secrets.VULTR_SSH_KEY }}
-          source: "arkana"
+          source: "arkana,migrations"
           target: "/tmp"
 
       - name: Restart service
@@ -42,6 +42,9 @@ jobs:
           script: |
             sudo systemctl stop arkana || true
             sudo mv /tmp/arkana /opt/arkana/arkana
+            sudo rm -rf /opt/arkana/migrations
+            sudo mv /tmp/migrations /opt/arkana/migrations
+            sudo chown -R arkana:arkana /opt/arkana
             sudo chmod +x /opt/arkana/arkana
             sudo systemctl start arkana
             sudo systemctl status arkana
