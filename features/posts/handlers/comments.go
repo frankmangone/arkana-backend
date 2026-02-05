@@ -5,9 +5,11 @@ import (
 	"arkana/features/wallet/middlewares"
 	"arkana/shared/httputil"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/gorilla/mux"
 )
 
 var validate = validator.New()
@@ -21,7 +23,7 @@ func NewCommentHandler(ps *services.PostService, cs *services.CommentService) *C
 	return &CommentHandler{postService: ps, commentService: cs}
 }
 
-// CreateComment handles POST /api/posts/comment
+// CreateComment handles POST /api/posts/{path}/comments
 func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	vr, ok := middlewares.GetVerifiedRequest(r.Context())
 	if !ok {
@@ -29,8 +31,14 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	vars := mux.Vars(r)
+	path := vars["path"]
+	if path == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "missing path in URL")
+		return
+	}
+
 	var payload struct {
-		Path     string `json:"path" validate:"required"`
 		Body     string `json:"body" validate:"required"`
 		ParentID *int   `json:"parent_id,omitempty"`
 	}
@@ -44,8 +52,12 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := h.postService.GetOrCreateByPath(payload.Path)
+	post, err := h.postService.GetByPath(path)
 	if err != nil {
+		if errors.Is(err, services.ErrPostNotFound) {
+			httputil.WriteError(w, http.StatusNotFound, "post not found")
+			return
+		}
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to resolve post")
 		return
 	}

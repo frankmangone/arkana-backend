@@ -13,7 +13,9 @@ func RegisterRoutes(router *mux.Router, ps *services.PostService, cs *services.C
 	commentHandler := NewCommentHandler(ps, cs)
 	infoHandler := NewInfoHandler(ps)
 
-	router.HandleFunc("/api/posts/info", infoHandler.GetPostInfo).Methods("GET", "OPTIONS")
-	router.Handle("/api/posts/like", auth.RequireAuth(http.HandlerFunc(likeHandler.ToggleLike))).Methods("POST", "OPTIONS")
-	router.Handle("/api/posts/comment", auth.RequireAuth(http.HandlerFunc(commentHandler.CreateComment))).Methods("POST", "OPTIONS")
+	// REST-compliant routes with path as URL parameter
+	// The {path:.*} pattern captures everything including slashes
+	router.HandleFunc("/api/posts/{path:.*}/info", infoHandler.GetPostInfo).Methods("GET", "OPTIONS")
+	router.Handle("/api/posts/{path:.*}/like", auth.RequireAuth(http.HandlerFunc(likeHandler.ToggleLike))).Methods("POST", "OPTIONS")
+	router.Handle("/api/posts/{path:.*}/comments", auth.RequireAuth(http.HandlerFunc(commentHandler.CreateComment))).Methods("POST", "OPTIONS")
 }

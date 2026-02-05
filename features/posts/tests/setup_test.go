@@ -85,6 +85,18 @@ func insertTestWallet(t *testing.T, db *sql.DB, address string) int {
 	return int(id)
 }
 
+func insertTestPost(t *testing.T, db *sql.DB, path string) int {
+	t.Helper()
+	result, err := db.Exec(
+		"INSERT INTO posts (path_identifier, like_count) VALUES (?, 0)", path,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	return int(id)
+}
+
 func setupRouter(t *testing.T, db *sql.DB) *mux.Router {
 	t.Helper()
 	router := mux.NewRouter()
@@ -107,6 +119,31 @@ func generateTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 	return key, address
 }
 
+// buildSigningMessage creates the human-readable message for signing.
+// Must match the backend's BuildSigningMessage function.
+func buildSigningMessage(payload map[string]any) string {
+	title := "Arkana Login"
+	if action, ok := payload["action"].(string); ok && action == "like" {
+		title = "Arkana - Like Post"
+	}
+
+	var ts int64
+	switch v := payload["ts"].(type) {
+	case int64:
+		ts = v
+	case float64:
+		ts = int64(v)
+	case int:
+		ts = int64(v)
+	}
+
+	msg := fmt.Sprintf("%s\n\nAddress: %s\nTimestamp: %d", title, payload["addr"], ts)
+	if path, ok := payload["path"].(string); ok && path != "" {
+		msg += fmt.Sprintf("\nPath: %s", path)
+	}
+	return msg
+}
+
 // signJWS creates a compact JWS string (header.payload.signature) signed by the given key.
 func signJWS(t *testing.T, key *ecdsa.PrivateKey, payload map[string]any) string {
 	t.Helper()
@@ -125,7 +162,8 @@ func signJWS(t *testing.T, key *ecdsa.PrivateKey, payload map[string]any) string
 	payloadJSON, _ := json.Marshal(payload)
 	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
 
-	signingInput := protectedB64 + "." + payloadB64
+	// Build human-readable signing message
+	signingInput := buildSigningMessage(payload)
 
 	// EIP-191 personal_sign
 	prefixed := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(signingInput), signingInput)

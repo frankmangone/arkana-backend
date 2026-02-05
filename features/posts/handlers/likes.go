@@ -5,9 +5,11 @@ import (
 	"arkana/features/posts/services"
 	"arkana/features/wallet/middlewares"
 	"arkana/shared/httputil"
-	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+
+	"github.com/gorilla/mux"
 )
 
 type LikeHandler struct {
@@ -18,7 +20,7 @@ func NewLikeHandler(ps *services.PostService) *LikeHandler {
 	return &LikeHandler{postService: ps}
 }
 
-// ToggleLike handles POST /api/posts/like
+// ToggleLike handles POST /api/posts/{path}/like
 func (h *LikeHandler) ToggleLike(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[Like] Received like request from %s", r.RemoteAddr)
 
@@ -31,20 +33,24 @@ func (h *LikeHandler) ToggleLike(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[Like] Verified request for wallet ID: %d, address: %s", vr.WalletID, vr.Address)
 
-	var payload struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(vr.Payload, &payload); err != nil || payload.Path == "" {
-		log.Printf("[Like] Missing or invalid path in payload: %v", err)
-		httputil.WriteError(w, http.StatusBadRequest, "missing path in payload")
+	vars := mux.Vars(r)
+	path := vars["path"]
+	if path == "" {
+		log.Printf("[Like] Missing path in URL")
+		httputil.WriteError(w, http.StatusBadRequest, "missing path in URL")
 		return
 	}
 
-	log.Printf("[Like] Processing like for path: %s", payload.Path)
+	log.Printf("[Like] Processing like for path: %s", path)
 
-	post, err := h.postService.GetOrCreateByPath(payload.Path)
+	post, err := h.postService.GetByPath(path)
 	if err != nil {
-		log.Printf("[Like] Failed to resolve post for path %s: %v", payload.Path, err)
+		if errors.Is(err, services.ErrPostNotFound) {
+			log.Printf("[Like] Post not found: %s", path)
+			httputil.WriteError(w, http.StatusNotFound, "post not found")
+			return
+		}
+		log.Printf("[Like] Failed to resolve post for path %s: %v", path, err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to resolve post")
 		return
 	}

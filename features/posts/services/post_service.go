@@ -3,6 +3,7 @@ package services
 import (
 	"arkana/features/posts/models"
 	"database/sql"
+	"errors"
 )
 
 type PostService struct {
@@ -11,6 +12,23 @@ type PostService struct {
 
 func NewPostService(db *sql.DB) *PostService {
 	return &PostService{db: db}
+}
+
+// GetByPath finds a post by path_identifier.
+// Returns ErrPostNotFound if the post doesn't exist.
+func (s *PostService) GetByPath(path string) (*models.Post, error) {
+	var p models.Post
+	err := s.db.QueryRow(
+		"SELECT id, path_identifier, like_count, created_at, updated_at FROM posts WHERE path_identifier = ?",
+		path,
+	).Scan(&p.ID, &p.PathIdentifier, &p.LikeCount, &p.CreatedAt, &p.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrPostNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
 }
 
 // GetOrCreateByPath finds a post by path_identifier, creating it if it doesn't exist.
@@ -113,8 +131,11 @@ func (s *PostService) getByID(id int) (*models.Post, error) {
 	return &p, nil
 }
 
+var ErrPostNotFound = errors.New("post not found")
+
 // GetPostInfo returns post info by path, including whether a specific wallet has liked it.
 // If walletAddress is empty, liked will always be false.
+// Returns ErrPostNotFound if the post doesn't exist.
 func (s *PostService) GetPostInfo(path string, walletAddress string) (*models.PostInfoResponse, error) {
 	var likeCount int
 	var postID int
@@ -125,12 +146,7 @@ func (s *PostService) GetPostInfo(path string, walletAddress string) (*models.Po
 	).Scan(&postID, &likeCount)
 
 	if err == sql.ErrNoRows {
-		// Post doesn't exist yet - return zeros
-		return &models.PostInfoResponse{
-			Path:      path,
-			LikeCount: 0,
-			Liked:     false,
-		}, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, err

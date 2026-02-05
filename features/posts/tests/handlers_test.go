@@ -3,6 +3,7 @@ package tests
 import (
 	"arkana/features/posts/models"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,9 +16,22 @@ func TestToggleLikeHandler(t *testing.T) {
 	key, addr := generateTestKey(t)
 	insertTestWallet(t, db, addr)
 
+	t.Run("returns 404 for non-existent post", func(t *testing.T) {
+		jws := signJWS(t, key, map[string]any{"action": "like", "path": "non-existent-post"})
+		req := httptest.NewRequest("POST", "/api/posts/non-existent-post/like", strings.NewReader(jws))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("likes a post", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"path": "test-path"})
-		req := httptest.NewRequest("POST", "/api/posts/like", strings.NewReader(jws))
+		insertTestPost(t, db, "test-path")
+
+		jws := signJWS(t, key, map[string]any{"action": "like", "path": "test-path"})
+		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -36,8 +50,8 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("unlikes on second call", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"path": "test-path"})
-		req := httptest.NewRequest("POST", "/api/posts/like", strings.NewReader(jws))
+		jws := signJWS(t, key, map[string]any{"action": "like", "path": "test-path"})
+		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -52,7 +66,7 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/posts/like", strings.NewReader("not.a.jws"))
+		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader("not.a.jws"))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -68,9 +82,22 @@ func TestCreateCommentHandler(t *testing.T) {
 	key, addr := generateTestKey(t)
 	insertTestWallet(t, db, addr)
 
+	t.Run("returns 404 for non-existent post", func(t *testing.T) {
+		jws := signJWS(t, key, map[string]any{"body": "test comment"})
+		req := httptest.NewRequest("POST", "/api/posts/non-existent-post/comments", strings.NewReader(jws))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("creates a comment", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"path": "my-post", "body": "great post"})
-		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
+		insertTestPost(t, db, "my-post")
+
+		jws := signJWS(t, key, map[string]any{"body": "great post"})
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -89,9 +116,9 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("creates a reply", func(t *testing.T) {
-		// Create parent
-		jws := signJWS(t, key, map[string]any{"path": "my-post", "body": "parent"})
-		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
+		// Create parent comment (post already exists from previous test)
+		jws := signJWS(t, key, map[string]any{"body": "parent"})
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -99,8 +126,8 @@ func TestCreateCommentHandler(t *testing.T) {
 		json.NewDecoder(rec.Body).Decode(&parent)
 
 		// Reply
-		jws = signJWS(t, key, map[string]any{"path": "my-post", "body": "reply", "parent_id": parent.ID})
-		req = httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
+		jws = signJWS(t, key, map[string]any{"body": "reply", "parent_id": parent.ID})
+		req = httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
 		rec = httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -116,8 +143,8 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects empty body", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"path": "my-post", "body": ""})
-		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader(jws))
+		jws := signJWS(t, key, map[string]any{"body": ""})
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -127,12 +154,106 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/posts/comment", strings.NewReader("bad.jws.data"))
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader("bad.jws.data"))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
+}
+
+func TestGetPostInfoHandler(t *testing.T) {
+	db := setupTestDB(t)
+	router := setupRouter(t, db)
+
+	t.Run("returns 404 for non-existent post", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/posts/non-existent-post/info", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("returns post info for existing post", func(t *testing.T) {
+		insertTestPost(t, db, "existing-post")
+
+		req := httptest.NewRequest("GET", "/api/posts/existing-post/info", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.PostInfoResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp.Path != "existing-post" {
+			t.Errorf("path = %q, want %q", resp.Path, "existing-post")
+		}
+		if resp.LikeCount != 0 {
+			t.Errorf("like_count = %d, want 0", resp.LikeCount)
+		}
+		if resp.Liked {
+			t.Error("liked = true, want false")
+		}
+	})
+
+	t.Run("returns liked status for authenticated user", func(t *testing.T) {
+		insertTestPost(t, db, "liked-post")
+		key, addr := generateTestKey(t)
+		insertTestWallet(t, db, addr)
+
+		// Like the post first
+		jws := signJWS(t, key, map[string]any{"action": "like", "path": "liked-post"})
+		req := httptest.NewRequest("POST", "/api/posts/liked-post/like", strings.NewReader(jws))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("like failed: status = %d; body: %s", rec.Code, rec.Body.String())
+		}
+
+		// Now check post info with wallet
+		req = httptest.NewRequest("GET", fmt.Sprintf("/api/posts/liked-post/info?wallet=%s", addr), nil)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.PostInfoResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp.LikeCount != 1 {
+			t.Errorf("like_count = %d, want 1", resp.LikeCount)
+		}
+		if !resp.Liked {
+			t.Error("liked = false, want true")
+		}
+	})
+
+	t.Run("handles paths with slashes", func(t *testing.T) {
+		insertTestPost(t, db, "category/my-post")
+
+		req := httptest.NewRequest("GET", "/api/posts/category/my-post/info", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.PostInfoResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp.Path != "category/my-post" {
+			t.Errorf("path = %q, want %q", resp.Path, "category/my-post")
 		}
 	})
 }
