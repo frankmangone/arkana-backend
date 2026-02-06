@@ -124,7 +124,12 @@ func generateTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 func buildSigningMessage(payload map[string]any) string {
 	title := "Arkana Login"
 	if action, ok := payload["action"].(string); ok && action == "like" {
-		title = "Arkana - Like Post"
+		// Check if this is an unlike action (current liked state is true)
+		if liked, ok := payload["liked"].(bool); ok && liked {
+			title = "Arkana - Unlike Post"
+		} else {
+			title = "Arkana - Like Post"
+		}
 	}
 
 	var ts int64

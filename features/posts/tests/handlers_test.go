@@ -50,7 +50,8 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("unlikes on second call", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"action": "like", "path": "test-path"})
+		// Pass liked: true to indicate this is an unlike action
+		jws := signJWS(t, key, map[string]any{"action": "like", "path": "test-path", "liked": true})
 		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader(jws))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)

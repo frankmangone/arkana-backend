@@ -19,13 +19,19 @@ func BuildSigningMessage(payloadBytes []byte) string {
 		Timestamp int64  `json:"ts"`
 		Action    string `json:"action,omitempty"`
 		Path      string `json:"path,omitempty"`
+		Liked     *bool  `json:"liked,omitempty"`
 	}
 	json.Unmarshal(payloadBytes, &payload)
 
 	// Determine title based on action
 	title := "Arkana Login"
 	if payload.Action == "like" {
-		title = "Arkana - Like Post"
+		// Check if this is an unlike action (current liked state is true)
+		if payload.Liked != nil && *payload.Liked {
+			title = "Arkana - Unlike Post"
+		} else {
+			title = "Arkana - Like Post"
+		}
 	}
 
 	msg := fmt.Sprintf("%s\n\nAddress: %s\nTimestamp: %d", title, payload.Address, payload.Timestamp)
