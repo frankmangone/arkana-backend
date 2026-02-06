@@ -119,58 +119,31 @@ func generateTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 	return key, address
 }
 
-// buildSigningMessage creates the human-readable message for signing.
-// Must match the backend's BuildSigningMessage function.
-func buildSigningMessage(payload map[string]any) string {
-	title := "Arkana Login"
-	if action, ok := payload["action"].(string); ok && action == "like" {
-		// Check if this is an unlike action (current liked state is true)
-		if liked, ok := payload["liked"].(bool); ok && liked {
-			title = "Arkana - Unlike Post"
-		} else {
-			title = "Arkana - Like Post"
-		}
-	}
-
-	var ts int64
-	switch v := payload["ts"].(type) {
-	case int64:
-		ts = v
-	case float64:
-		ts = int64(v)
-	case int:
-		ts = int64(v)
-	}
-
-	msg := fmt.Sprintf("%s\n\nAddress: %s\nTimestamp: %d", title, payload["addr"], ts)
-	if path, ok := payload["path"].(string); ok && path != "" {
-		msg += fmt.Sprintf("\nPath: %s", path)
-	}
-	return msg
-}
-
 // signJWS creates a compact JWS string (header.payload.signature) signed by the given key.
+// The signature is over the JSON payload string directly.
 func signJWS(t *testing.T, key *ecdsa.PrivateKey, payload map[string]any) string {
 	t.Helper()
 
-	headerJSON, _ := json.Marshal(map[string]string{"sys": "ethereum"})
+	headerJSON, _ := json.Marshal(map[string]string{"system": "ethereum"})
 	protectedB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 
 	// Inject address and timestamp if not present
-	if _, ok := payload["addr"]; !ok {
-		payload["addr"] = crypto.PubkeyToAddress(key.PublicKey).Hex()
+	if _, ok := payload["address"]; !ok {
+		payload["address"] = crypto.PubkeyToAddress(key.PublicKey).Hex()
 	}
-	if _, ok := payload["ts"]; !ok {
-		payload["ts"] = time.Now().Unix()
+	if _, ok := payload["timestamp"]; !ok {
+		payload["timestamp"] = time.Now().Unix()
+	}
+	// Default action to LOGIN if not specified
+	if _, ok := payload["action"]; !ok {
+		payload["action"] = "LOGIN"
 	}
 
 	payloadJSON, _ := json.Marshal(payload)
 	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
 
-	// Build human-readable signing message
-	signingInput := buildSigningMessage(payload)
-
-	// EIP-191 personal_sign
+	// Sign the JSON payload directly with EIP-191 personal_sign
+	signingInput := string(payloadJSON)
 	prefixed := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(signingInput), signingInput)
 	hash := crypto.Keccak256Hash([]byte(prefixed))
 

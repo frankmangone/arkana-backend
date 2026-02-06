@@ -19,6 +19,21 @@ type Comment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// CommentResponse is the API response for a comment, including author info.
+type CommentResponse struct {
+	ID            int       `json:"id"`
+	ParentID      *int      `json:"parent_id,omitempty"`
+	Body          string    `json:"body"`
+	CreatedAt     time.Time `json:"created_at"`
+	AuthorAddress string    `json:"author_address"`
+}
+
+// CommentsResponse wraps the list of comments for a post.
+type CommentsResponse struct {
+	Comments []CommentResponse `json:"comments"`
+	Total    int               `json:"total"`
+}
+
 type ToggleLikeResponse struct {
 	Liked     bool `json:"liked"`
 	LikeCount int  `json:"like_count"`

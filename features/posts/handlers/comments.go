@@ -6,6 +6,7 @@ import (
 	"arkana/shared/httputil"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
@@ -21,6 +22,34 @@ type CommentHandler struct {
 
 func NewCommentHandler(ps *services.PostService, cs *services.CommentService) *CommentHandler {
 	return &CommentHandler{postService: ps, commentService: cs}
+}
+
+// GetComments handles GET /api/posts/{path}/comments
+func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	path := vars["path"]
+	if path == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "missing path in URL")
+		return
+	}
+
+	post, err := h.postService.GetByPath(path)
+	if err != nil {
+		if errors.Is(err, services.ErrPostNotFound) {
+			httputil.WriteError(w, http.StatusNotFound, "post not found")
+			return
+		}
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to resolve post")
+		return
+	}
+
+	comments, err := h.commentService.GetByPostID(post.ID)
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to fetch comments")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, comments)
 }
 
 // CreateComment handles POST /api/posts/{path}/comments
@@ -64,6 +93,10 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	comment, err := h.commentService.Create(post.ID, vr.WalletID, payload.Body, payload.ParentID)
 	if err != nil {
+		if errors.Is(err, services.ErrCommentTooLong) {
+			httputil.WriteError(w, http.StatusBadRequest, fmt.Sprintf("comment exceeds maximum length of %d characters", services.MaxCommentLength))
+			return
+		}
 		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
