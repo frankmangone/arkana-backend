@@ -164,8 +164,8 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects comment exceeding max length", func(t *testing.T) {
-		// Create a comment body that exceeds 2000 characters
-		longBody := strings.Repeat("x", 2001)
+		// Create a comment body that exceeds 1000 characters
+		longBody := strings.Repeat("x", 1001)
 		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": longBody})
 		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
 		rec := httptest.NewRecorder()

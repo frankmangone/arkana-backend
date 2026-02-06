@@ -8,7 +8,7 @@ import (
 )
 
 // MaxCommentLength is the maximum allowed length for a comment body.
-const MaxCommentLength = 2000
+const MaxCommentLength = 1000
 
 var ErrCommentTooLong = errors.New("comment exceeds maximum length")
 
