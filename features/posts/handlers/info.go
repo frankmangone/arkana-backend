@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -18,24 +19,28 @@ func NewInfoHandler(ps *services.PostService) *InfoHandler {
 	return &InfoHandler{postService: ps}
 }
 
-// GetPostInfo handles GET /api/posts/{path}/info?wallet=xxx
+// GetPostInfo handles GET /api/posts/{path}/info?user=<id>
 func (h *InfoHandler) GetPostInfo(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	path := vars["path"]
-	wallet := r.URL.Query().Get("wallet")
 
-	log.Printf("[PostInfo] Request for path=%q wallet=%q", path, wallet)
+	var userID int
+	if userIDStr := r.URL.Query().Get("user"); userIDStr != "" {
+		if id, err := strconv.Atoi(userIDStr); err == nil {
+			userID = id
+		}
+	}
+
+	log.Printf("[PostInfo] Request for path=%q userID=%d", path, userID)
 
 	if path == "" {
-		log.Printf("[PostInfo] Missing path parameter")
 		httputil.WriteError(w, http.StatusBadRequest, "missing path parameter")
 		return
 	}
 
-	info, err := h.postService.GetPostInfo(path, wallet)
+	info, err := h.postService.GetPostInfo(path, userID)
 	if err != nil {
 		if errors.Is(err, services.ErrPostNotFound) {
-			log.Printf("[PostInfo] Post not found: %s", path)
 			httputil.WriteError(w, http.StatusNotFound, "post not found")
 			return
 		}

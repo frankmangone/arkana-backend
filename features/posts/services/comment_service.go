@@ -20,9 +20,8 @@ func NewCommentService(db *sql.DB) *CommentService {
 	return &CommentService{db: db}
 }
 
-// Create adds a new comment to a post. If parentID is non-nil, validates
-// that the parent comment belongs to the same post.
-func (s *CommentService) Create(postID, walletID int, body string, parentID *int) (*models.Comment, error) {
+// Create adds a new comment to a post.
+func (s *CommentService) Create(postID, userID int, body string, parentID *int) (*models.Comment, error) {
 	if len(body) > MaxCommentLength {
 		return nil, ErrCommentTooLong
 	}
@@ -44,8 +43,8 @@ func (s *CommentService) Create(postID, walletID int, body string, parentID *int
 	}
 
 	result, err := s.db.Exec(
-		"INSERT INTO comments (post_id, wallet_id, parent_id, body) VALUES (?, ?, ?, ?)",
-		postID, walletID, parentID, body,
+		"INSERT INTO comments (post_id, user_id, parent_id, body) VALUES (?, ?, ?, ?)",
+		postID, userID, parentID, body,
 	)
 	if err != nil {
 		return nil, err
@@ -58,9 +57,9 @@ func (s *CommentService) Create(postID, walletID int, body string, parentID *int
 
 	var c models.Comment
 	err = s.db.QueryRow(
-		"SELECT id, post_id, wallet_id, parent_id, body, created_at FROM comments WHERE id = ?",
+		"SELECT id, post_id, user_id, parent_id, body, created_at FROM comments WHERE id = ?",
 		id,
-	).Scan(&c.ID, &c.PostID, &c.WalletID, &c.ParentID, &c.Body, &c.CreatedAt)
+	).Scan(&c.ID, &c.PostID, &c.UserID, &c.ParentID, &c.Body, &c.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -69,12 +68,12 @@ func (s *CommentService) Create(postID, walletID int, body string, parentID *int
 }
 
 // GetByPostID returns all comments for a post, ordered by creation time.
-// Includes the author's wallet address for display.
+// Includes the author's username and avatar from the users table.
 func (s *CommentService) GetByPostID(postID int) (*models.CommentsResponse, error) {
 	rows, err := s.db.Query(`
-		SELECT c.id, c.parent_id, c.body, c.created_at, w.address
+		SELECT c.id, c.parent_id, c.body, c.created_at, u.username, u.avatar_url
 		FROM comments c
-		JOIN wallets w ON w.id = c.wallet_id
+		JOIN users u ON u.id = c.user_id
 		WHERE c.post_id = ?
 		ORDER BY c.created_at ASC
 	`, postID)
@@ -86,8 +85,16 @@ func (s *CommentService) GetByPostID(postID int) (*models.CommentsResponse, erro
 	var comments []models.CommentResponse
 	for rows.Next() {
 		var c models.CommentResponse
-		if err := rows.Scan(&c.ID, &c.ParentID, &c.Body, &c.CreatedAt, &c.AuthorAddress); err != nil {
+		var username sql.NullString
+		var avatarURL sql.NullString
+		if err := rows.Scan(&c.ID, &c.ParentID, &c.Body, &c.CreatedAt, &username, &avatarURL); err != nil {
 			return nil, err
+		}
+		if username.Valid {
+			c.AuthorUsername = username.String
+		}
+		if avatarURL.Valid {
+			c.AuthorAvatarURL = &avatarURL.String
 		}
 		comments = append(comments, c)
 	}
@@ -96,7 +103,6 @@ func (s *CommentService) GetByPostID(postID int) (*models.CommentsResponse, erro
 		return nil, err
 	}
 
-	// Return empty slice instead of nil for cleaner JSON
 	if comments == nil {
 		comments = []models.CommentResponse{}
 	}

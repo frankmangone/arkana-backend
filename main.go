@@ -38,7 +38,7 @@ func main() {
 	}
 
 	// Setup router with all routes
-	r := router.Setup(db, cfg.CORSAllowedOrigin)
+	r := router.Setup(db, cfg)
 
 	srv := &http.Server{
 		Addr:    ":8082",

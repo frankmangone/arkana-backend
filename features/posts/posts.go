@@ -1,9 +1,9 @@
 package posts
 
 import (
+	"arkana/features/auth/middlewares"
 	"arkana/features/posts/handlers"
 	"arkana/features/posts/services"
-	"arkana/features/wallet/middlewares"
 	"database/sql"
 
 	"github.com/gorilla/mux"

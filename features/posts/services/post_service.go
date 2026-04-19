@@ -15,7 +15,6 @@ func NewPostService(db *sql.DB) *PostService {
 }
 
 // GetByPath finds a post by path_identifier.
-// Returns ErrPostNotFound if the post doesn't exist.
 func (s *PostService) GetByPath(path string) (*models.Post, error) {
 	var p models.Post
 	err := s.db.QueryRow(
@@ -58,27 +57,24 @@ func (s *PostService) GetOrCreateByPath(path string) (*models.Post, error) {
 	return s.getByID(int(id))
 }
 
-// ToggleLike adds or removes a like for the given wallet on the given post.
-// Returns whether the post is now liked and the new like count.
-func (s *PostService) ToggleLike(postID, walletID int) (liked bool, likeCount int, err error) {
+// ToggleLike adds or removes a like for the given user on the given post.
+func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, 0, err
 	}
 	defer tx.Rollback()
 
-	// Check if already liked
 	var exists int
 	err = tx.QueryRow(
-		"SELECT 1 FROM post_likes WHERE post_id = ? AND wallet_id = ?",
-		postID, walletID,
+		"SELECT 1 FROM post_likes WHERE post_id = ? AND user_id = ?",
+		postID, userID,
 	).Scan(&exists)
 
 	if err == sql.ErrNoRows {
-		// Not liked yet — add like
 		_, err = tx.Exec(
-			"INSERT INTO post_likes (post_id, wallet_id) VALUES (?, ?)",
-			postID, walletID,
+			"INSERT INTO post_likes (post_id, user_id) VALUES (?, ?)",
+			postID, userID,
 		)
 		if err != nil {
 			return false, 0, err
@@ -91,10 +87,9 @@ func (s *PostService) ToggleLike(postID, walletID int) (liked bool, likeCount in
 	} else if err != nil {
 		return false, 0, err
 	} else {
-		// Already liked — remove
 		_, err = tx.Exec(
-			"DELETE FROM post_likes WHERE post_id = ? AND wallet_id = ?",
-			postID, walletID,
+			"DELETE FROM post_likes WHERE post_id = ? AND user_id = ?",
+			postID, userID,
 		)
 		if err != nil {
 			return false, 0, err
@@ -106,7 +101,6 @@ func (s *PostService) ToggleLike(postID, walletID int) (liked bool, likeCount in
 		liked = false
 	}
 
-	// Read back the current count
 	err = tx.QueryRow("SELECT like_count FROM posts WHERE id = ?", postID).Scan(&likeCount)
 	if err != nil {
 		return false, 0, err
@@ -133,10 +127,9 @@ func (s *PostService) getByID(id int) (*models.Post, error) {
 
 var ErrPostNotFound = errors.New("post not found")
 
-// GetPostInfo returns post info by path, including whether a specific wallet has liked it.
-// If walletAddress is empty, liked will always be false.
-// Returns ErrPostNotFound if the post doesn't exist.
-func (s *PostService) GetPostInfo(path string, walletAddress string) (*models.PostInfoResponse, error) {
+// GetPostInfo returns post info by path, including whether a specific user has liked it.
+// If userID is 0, liked will always be false.
+func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResponse, error) {
 	var likeCount int
 	var postID int
 
@@ -152,15 +145,13 @@ func (s *PostService) GetPostInfo(path string, walletAddress string) (*models.Po
 		return nil, err
 	}
 
-	// Check if wallet has liked this post
 	var liked bool
-	if walletAddress != "" {
+	if userID > 0 {
 		var exists int
-		err = s.db.QueryRow(`
-			SELECT 1 FROM post_likes pl
-			JOIN wallets w ON w.id = pl.wallet_id
-			WHERE pl.post_id = ? AND LOWER(w.address) = LOWER(?)
-		`, postID, walletAddress).Scan(&exists)
+		err = s.db.QueryRow(
+			"SELECT 1 FROM post_likes WHERE post_id = ? AND user_id = ?",
+			postID, userID,
+		).Scan(&exists)
 
 		if err == nil {
 			liked = true

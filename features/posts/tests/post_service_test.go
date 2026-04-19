@@ -37,11 +37,11 @@ func TestGetOrCreateByPath(t *testing.T) {
 func TestToggleLike(t *testing.T) {
 	db := setupTestDB(t)
 	svc := services.NewPostService(db)
-	walletID := insertTestWallet(t, db, "0xabc")
+	userID := insertTestUser(t, db, "toggler@example.com")
 	post, _ := svc.GetOrCreateByPath("test-post")
 
 	t.Run("first toggle likes", func(t *testing.T) {
-		liked, count, err := svc.ToggleLike(post.ID, walletID)
+		liked, count, err := svc.ToggleLike(post.ID, userID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestToggleLike(t *testing.T) {
 	})
 
 	t.Run("second toggle unlikes", func(t *testing.T) {
-		liked, count, err := svc.ToggleLike(post.ID, walletID)
+		liked, count, err := svc.ToggleLike(post.ID, userID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,13 +66,13 @@ func TestToggleLike(t *testing.T) {
 		}
 	})
 
-	t.Run("multiple wallets", func(t *testing.T) {
-		wallet2 := insertTestWallet(t, db, "0xdef")
+	t.Run("multiple users", func(t *testing.T) {
+		user2 := insertTestUser(t, db, "toggler2@example.com")
 
-		svc.ToggleLike(post.ID, walletID) // like
-		svc.ToggleLike(post.ID, wallet2)  // like
+		svc.ToggleLike(post.ID, userID) // like
+		svc.ToggleLike(post.ID, user2)  // like
 
-		liked, count, err := svc.ToggleLike(post.ID, walletID) // unlike
+		liked, count, err := svc.ToggleLike(post.ID, userID) // unlike
 		if err != nil {
 			t.Fatal(err)
 		}

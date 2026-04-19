@@ -1,8 +1,8 @@
 package handlers
 
 import (
+	"arkana/features/auth/middlewares"
 	"arkana/features/posts/services"
-	"arkana/features/wallet/middlewares"
 	"arkana/shared/httputil"
 	"encoding/json"
 	"errors"
@@ -54,7 +54,7 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 
 // CreateComment handles POST /api/posts/{path}/comments
 func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
-	vr, ok := middlewares.GetVerifiedRequest(r.Context())
+	userID, ok := middlewares.GetUserIDFromContext(r.Context())
 	if !ok {
 		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -68,10 +68,10 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Body     string `json:"body" validate:"required"`
+		Body     string `json:"body"      validate:"required"`
 		ParentID *int   `json:"parent_id,omitempty"`
 	}
-	if err := json.Unmarshal(vr.Payload, &payload); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
@@ -81,7 +81,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := h.postService.GetByPath(path)
+	post, err := h.postService.GetOrCreateByPath(path)
 	if err != nil {
 		if errors.Is(err, services.ErrPostNotFound) {
 			httputil.WriteError(w, http.StatusNotFound, "post not found")
@@ -91,7 +91,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := h.commentService.Create(post.ID, vr.WalletID, payload.Body, payload.ParentID)
+	comment, err := h.commentService.Create(post.ID, userID, payload.Body, payload.ParentID)
 	if err != nil {
 		if errors.Is(err, services.ErrCommentTooLong) {
 			httputil.WriteError(w, http.StatusBadRequest, fmt.Sprintf("comment exceeds maximum length of %d characters", services.MaxCommentLength))

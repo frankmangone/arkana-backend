@@ -1,26 +1,20 @@
 package tests
 
 import (
-	"crypto/ecdsa"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
+	authmw "arkana/features/auth/middlewares"
+	authsvc "arkana/features/auth/services"
 	"arkana/features/posts/handlers"
 	"arkana/features/posts/services"
-	walletsvc "arkana/features/wallet/services"
 
-	walletmw "arkana/features/wallet/middlewares"
-
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+const testJWTSecret = "test-secret-key"
 
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -31,12 +25,19 @@ func setupTestDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 
 	_, err = db.Exec(`
-		CREATE TABLE wallets (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			address TEXT UNIQUE NOT NULL,
-			system TEXT NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		CREATE TABLE users (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			email            TEXT UNIQUE NOT NULL,
+			username         TEXT,
+			avatar_url       TEXT,
+			auth_provider    TEXT NOT NULL CHECK(auth_provider IN ('google', 'github', 'apple', 'discord')),
+			provider_user_id TEXT NOT NULL,
+			email_verified   INTEGER NOT NULL DEFAULT 0,
+			wallet_address   TEXT,
+			wallet_system    TEXT,
+			created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(auth_provider, provider_user_id)
 		);
 		CREATE TABLE posts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,24 +47,25 @@ func setupTestDB(t *testing.T) *sql.DB {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE post_likes (
-			post_id INTEGER NOT NULL,
-			wallet_id INTEGER NOT NULL,
+			post_id  INTEGER NOT NULL,
+			user_id  INTEGER NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (post_id, wallet_id),
+			PRIMARY KEY (post_id, user_id),
 			FOREIGN KEY (post_id) REFERENCES posts(id),
-			FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+			FOREIGN KEY (user_id) REFERENCES users(id)
 		);
 		CREATE TABLE comments (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			post_id INTEGER NOT NULL,
-			wallet_id INTEGER NOT NULL,
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			post_id   INTEGER NOT NULL,
+			user_id   INTEGER NOT NULL,
 			parent_id INTEGER,
-			body TEXT NOT NULL,
+			body      TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (post_id) REFERENCES posts(id),
-			FOREIGN KEY (wallet_id) REFERENCES wallets(id),
+			FOREIGN KEY (post_id)   REFERENCES posts(id),
+			FOREIGN KEY (user_id)   REFERENCES users(id),
 			FOREIGN KEY (parent_id) REFERENCES comments(id)
 		);
+		CREATE INDEX idx_comments_post ON comments(post_id);
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -72,11 +74,11 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func insertTestWallet(t *testing.T, db *sql.DB, address string) int {
+func insertTestUser(t *testing.T, db *sql.DB, email string) int {
 	t.Helper()
-	address = strings.ToLower(address)
 	result, err := db.Exec(
-		"INSERT INTO wallets (address, system) VALUES (?, 'ethereum')", address,
+		"INSERT INTO users (email, username, auth_provider, provider_user_id) VALUES (?, ?, 'google', ?)",
+		email, email, email,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -97,62 +99,21 @@ func insertTestPost(t *testing.T, db *sql.DB, path string) int {
 	return int(id)
 }
 
+func generateTestJWT(t *testing.T, userID int, email string) string {
+	t.Helper()
+	token, err := authsvc.GenerateAccessToken(userID, email, testJWTSecret, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
 func setupRouter(t *testing.T, db *sql.DB) *mux.Router {
 	t.Helper()
 	router := mux.NewRouter()
-	ws := walletsvc.NewWalletService(db)
-	auth := walletmw.NewAuthMiddleware(ws)
+	auth := authmw.NewAuthMiddleware(testJWTSecret)
 	ps := services.NewPostService(db)
 	cs := services.NewCommentService(db)
 	handlers.RegisterRoutes(router, ps, cs, auth)
 	return router
 }
-
-// generateTestKey creates a new Ethereum private key and returns it with its address.
-func generateTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
-	t.Helper()
-	key, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := crypto.PubkeyToAddress(key.PublicKey).Hex()
-	return key, address
-}
-
-// signJWS creates a compact JWS string (header.payload.signature) signed by the given key.
-// The signature is over the JSON payload string directly.
-func signJWS(t *testing.T, key *ecdsa.PrivateKey, payload map[string]any) string {
-	t.Helper()
-
-	headerJSON, _ := json.Marshal(map[string]string{"system": "ethereum"})
-	protectedB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-
-	// Inject address and timestamp if not present
-	if _, ok := payload["address"]; !ok {
-		payload["address"] = crypto.PubkeyToAddress(key.PublicKey).Hex()
-	}
-	if _, ok := payload["timestamp"]; !ok {
-		payload["timestamp"] = time.Now().Unix()
-	}
-	// Default action to LOGIN if not specified
-	if _, ok := payload["action"]; !ok {
-		payload["action"] = "LOGIN"
-	}
-
-	payloadJSON, _ := json.Marshal(payload)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
-
-	// Sign the JSON payload directly with EIP-191 personal_sign
-	signingInput := string(payloadJSON)
-	prefixed := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(signingInput), signingInput)
-	hash := crypto.Keccak256Hash([]byte(prefixed))
-
-	sig, err := crypto.Sign(hash.Bytes(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig[64] += 27 // EIP-191 recovery id
-
-	return protectedB64 + "." + payloadB64 + "." + hex.EncodeToString(sig)
-}
-
