@@ -13,25 +13,13 @@ import (
 func TestToggleLikeHandler(t *testing.T) {
 	db := setupTestDB(t)
 	router := setupRouter(t, db)
-	key, addr := generateTestKey(t)
-	insertTestWallet(t, db, addr)
-
-	t.Run("returns 404 for non-existent post", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"action": "LIKE_POST", "path": "non-existent-post"})
-		req := httptest.NewRequest("POST", "/api/posts/non-existent-post/like", strings.NewReader(jws))
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
-		}
-	})
+	userID := insertTestUser(t, db, "liker@example.com")
+	token := generateTestJWT(t, userID, "liker@example.com")
+	insertTestPost(t, db, "test-path")
 
 	t.Run("likes a post", func(t *testing.T) {
-		insertTestPost(t, db, "test-path")
-
-		jws := signJWS(t, key, map[string]any{"action": "LIKE_POST", "path": "test-path"})
-		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader(jws))
+		req := httptest.NewRequest("POST", "/api/posts/test-path/like", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -50,8 +38,8 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("unlikes on second call", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"action": "UNLIKE_POST", "path": "test-path"})
-		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader(jws))
+		req := httptest.NewRequest("POST", "/api/posts/test-path/like", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -66,7 +54,7 @@ func TestToggleLikeHandler(t *testing.T) {
 	})
 
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/posts/test-path/like", strings.NewReader("not.a.jws"))
+		req := httptest.NewRequest("POST", "/api/posts/test-path/like", nil)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -79,25 +67,15 @@ func TestToggleLikeHandler(t *testing.T) {
 func TestCreateCommentHandler(t *testing.T) {
 	db := setupTestDB(t)
 	router := setupRouter(t, db)
-	key, addr := generateTestKey(t)
-	insertTestWallet(t, db, addr)
-
-	t.Run("returns 404 for non-existent post", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": "test comment"})
-		req := httptest.NewRequest("POST", "/api/posts/non-existent-post/comments", strings.NewReader(jws))
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
-		}
-	})
+	userID := insertTestUser(t, db, "commenter@example.com")
+	token := generateTestJWT(t, userID, "commenter@example.com")
+	insertTestPost(t, db, "my-post")
 
 	t.Run("creates a comment", func(t *testing.T) {
-		insertTestPost(t, db, "my-post")
-
-		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": "great post"})
-		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
+		body := strings.NewReader(`{"body":"great post"}`)
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -116,18 +94,20 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("creates a reply", func(t *testing.T) {
-		// Create parent comment (post already exists from previous test)
-		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": "parent"})
-		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
+		parentBody := strings.NewReader(`{"body":"parent"}`)
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", parentBody)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
 		var parent models.Comment
 		json.NewDecoder(rec.Body).Decode(&parent)
 
-		// Reply
-		jws = signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": "reply", "parent_id": parent.ID})
-		req = httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
+		replyBody := strings.NewReader(fmt.Sprintf(`{"body":"reply","parent_id":%d}`, parent.ID))
+		req = httptest.NewRequest("POST", "/api/posts/my-post/comments", replyBody)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		rec = httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -143,8 +123,10 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects empty body", func(t *testing.T) {
-		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": ""})
-		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
+		body := strings.NewReader(`{"body":""}`)
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -154,7 +136,9 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader("bad.jws.data"))
+		body := strings.NewReader(`{"body":"test"}`)
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", body)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -164,10 +148,11 @@ func TestCreateCommentHandler(t *testing.T) {
 	})
 
 	t.Run("rejects comment exceeding max length", func(t *testing.T) {
-		// Create a comment body that exceeds 1000 characters
 		longBody := strings.Repeat("x", 1001)
-		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": longBody})
-		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", strings.NewReader(jws))
+		body := strings.NewReader(fmt.Sprintf(`{"body":%q}`, longBody))
+		req := httptest.NewRequest("POST", "/api/posts/my-post/comments", body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -180,8 +165,8 @@ func TestCreateCommentHandler(t *testing.T) {
 func TestGetCommentsHandler(t *testing.T) {
 	db := setupTestDB(t)
 	router := setupRouter(t, db)
-	key, addr := generateTestKey(t)
-	insertTestWallet(t, db, addr)
+	userID := insertTestUser(t, db, "author@example.com")
+	token := generateTestJWT(t, userID, "author@example.com")
 
 	t.Run("returns 404 for non-existent post", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/posts/non-existent/comments", nil)
@@ -215,12 +200,13 @@ func TestGetCommentsHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("returns comments with author address", func(t *testing.T) {
+	t.Run("returns comments with author username", func(t *testing.T) {
 		insertTestPost(t, db, "commented-post")
 
-		// Create a comment
-		jws := signJWS(t, key, map[string]any{"action": "CREATE_COMMENT", "body": "test comment"})
-		req := httptest.NewRequest("POST", "/api/posts/commented-post/comments", strings.NewReader(jws))
+		body := strings.NewReader(`{"body":"test comment"}`)
+		req := httptest.NewRequest("POST", "/api/posts/commented-post/comments", body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -228,7 +214,6 @@ func TestGetCommentsHandler(t *testing.T) {
 			t.Fatalf("create comment failed: status = %d; body: %s", rec.Code, rec.Body.String())
 		}
 
-		// Fetch comments
 		req = httptest.NewRequest("GET", "/api/posts/commented-post/comments", nil)
 		rec = httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -249,8 +234,8 @@ func TestGetCommentsHandler(t *testing.T) {
 		if resp.Comments[0].Body != "test comment" {
 			t.Errorf("body = %q, want %q", resp.Comments[0].Body, "test comment")
 		}
-		if resp.Comments[0].AuthorAddress == "" {
-			t.Error("author_address is empty")
+		if resp.Comments[0].AuthorUsername == "" {
+			t.Error("author_username is empty")
 		}
 	})
 }
@@ -296,12 +281,11 @@ func TestGetPostInfoHandler(t *testing.T) {
 
 	t.Run("returns liked status for authenticated user", func(t *testing.T) {
 		insertTestPost(t, db, "liked-post")
-		key, addr := generateTestKey(t)
-		insertTestWallet(t, db, addr)
+		uid := insertTestUser(t, db, "likerinfo@example.com")
+		tok := generateTestJWT(t, uid, "likerinfo@example.com")
 
-		// Like the post first
-		jws := signJWS(t, key, map[string]any{"action": "LIKE_POST", "path": "liked-post"})
-		req := httptest.NewRequest("POST", "/api/posts/liked-post/like", strings.NewReader(jws))
+		req := httptest.NewRequest("POST", "/api/posts/liked-post/like", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
@@ -309,8 +293,7 @@ func TestGetPostInfoHandler(t *testing.T) {
 			t.Fatalf("like failed: status = %d; body: %s", rec.Code, rec.Body.String())
 		}
 
-		// Now check post info with wallet
-		req = httptest.NewRequest("GET", fmt.Sprintf("/api/posts/liked-post/info?wallet=%s", addr), nil)
+		req = httptest.NewRequest("GET", fmt.Sprintf("/api/posts/liked-post/info?user=%d", uid), nil)
 		rec = httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 

@@ -3,5 +3,11 @@
 .env
 *.md
 !README.md
-*.db
 /out/
+
+# Build
+arkana
+
+# DB Files
+*.db
+*.db-*

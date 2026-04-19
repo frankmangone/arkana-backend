@@ -13,7 +13,7 @@ type Post struct {
 type Comment struct {
 	ID        int       `json:"id"`
 	PostID    int       `json:"post_id"`
-	WalletID  int       `json:"wallet_id"`
+	UserID    int       `json:"user_id"`
 	ParentID  *int      `json:"parent_id,omitempty"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
@@ -21,11 +21,12 @@ type Comment struct {
 
 // CommentResponse is the API response for a comment, including author info.
 type CommentResponse struct {
-	ID            int       `json:"id"`
-	ParentID      *int      `json:"parent_id,omitempty"`
-	Body          string    `json:"body"`
-	CreatedAt     time.Time `json:"created_at"`
-	AuthorAddress string    `json:"author_address"`
+	ID              int       `json:"id"`
+	ParentID        *int      `json:"parent_id,omitempty"`
+	Body            string    `json:"body"`
+	CreatedAt       time.Time `json:"created_at"`
+	AuthorUsername  string    `json:"author_username"`
+	AuthorAvatarURL *string   `json:"author_avatar_url,omitempty"`
 }
 
 // CommentsResponse wraps the list of comments for a post.
@@ -42,5 +43,5 @@ type ToggleLikeResponse struct {
 type PostInfoResponse struct {
 	Path      string `json:"path"`
 	LikeCount int    `json:"like_count"`
-	Liked     bool   `json:"liked"` // Only meaningful if wallet address was provided
+	Liked     bool   `json:"liked"`
 }
