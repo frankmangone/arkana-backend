@@ -4,6 +4,7 @@ import (
 	"arkana/config"
 	"arkana/features/auth"
 	"arkana/features/posts"
+	"arkana/features/search"
 	"database/sql"
 
 	"github.com/gorilla/mux"
@@ -18,6 +19,7 @@ func Setup(db *sql.DB, cfg *config.Config) *mux.Router {
 	authMiddleware := auth.Initialize(router, db, cfg)
 
 	posts.Initialize(router, db, authMiddleware)
+	search.Initialize(router, db, cfg)
 
 	return router
 }
