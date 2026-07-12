@@ -8,6 +8,9 @@
 # Build
 arkana
 
+# Docs
+!/docs/*
+
 # DB Files
 *.db
 *.db-*

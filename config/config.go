@@ -21,6 +21,10 @@ type Config struct {
 	GoogleClientID     string `env:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret string `env:"GOOGLE_CLIENT_SECRET"`
 	GoogleRedirectURL  string `env:"GOOGLE_REDIRECT_URL"`
+
+	// Meilisearch
+	MeiliHost      string `env:"MEILI_HOST"`
+	MeiliMasterKey string `env:"MEILI_MASTER_KEY"`
 }
 
 // Load loads configuration from environment variables
@@ -36,6 +40,9 @@ func Load() *Config {
 		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:  getEnv("GOOGLE_REDIRECT_URL", ""),
+
+		MeiliHost:      getEnv("MEILI_HOST", "http://localhost:7700"),
+		MeiliMasterKey: getEnv("MEILI_MASTER_KEY", ""),
 	}
 }
 
