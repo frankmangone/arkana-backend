@@ -38,6 +38,7 @@ func NewSearchService(db *sql.DB, host, masterKey string) *SearchService {
 // field instead of returning it in full.
 type meiliSearchRequest struct {
 	Q                     string   `json:"q"`
+	Limit                 int      `json:"limit"`
 	AttributesToRetrieve  []string `json:"attributesToRetrieve"`
 	AttributesToCrop      []string `json:"attributesToCrop"`
 	CropLength            int      `json:"cropLength"`
@@ -64,9 +65,10 @@ type meiliSearchResponse struct {
 
 // Search queries the per-language Meilisearch index ("posts_<lang>") and
 // returns a flattened result set.
-func (s *SearchService) Search(lang, query string) (*models.SearchResponse, error) {
+func (s *SearchService) Search(lang, query string, limit int) (*models.SearchResponse, error) {
 	reqBody := meiliSearchRequest{
 		Q:                     query,
+		Limit:                 limit,
 		AttributesToRetrieve:  []string{"id", "lang", "path", "title", "description", "tags"},
 		AttributesToCrop:      []string{"content"},
 		CropLength:            20,
