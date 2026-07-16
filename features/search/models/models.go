@@ -14,6 +14,19 @@ type SearchHit struct {
 	Thumbnail   string   `json:"thumbnail"`
 }
 
+// TagHit is a single tag with the number of posts carrying it.
+type TagHit struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
+}
+
+// TagSearchResponse is the API response for a tag type-ahead request,
+// ordered by post count (most-used tags first).
+type TagSearchResponse struct {
+	Query string   `json:"query"`
+	Tags  []TagHit `json:"tags"`
+}
+
 // SearchResponse is the API response for a search request.
 // FacetDistribution is only present when facets were requested; it maps
 // facet name -> value -> count within the current result set

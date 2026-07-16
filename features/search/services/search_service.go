@@ -120,35 +120,11 @@ func (s *SearchService) Search(params SearchParams) (*models.SearchResponse, err
 		reqBody.Facets = []string{"tags"}
 	}
 
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode search request: %w", err)
-	}
-
-	indexUID := "posts_" + params.Lang
-	url := fmt.Sprintf("%s/indexes/%s/search", s.host, indexUID)
-
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build search request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.masterKey)
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSearchUnavailable, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%w: status %d: %s", ErrSearchUnavailable, resp.StatusCode, string(body))
-	}
+	url := fmt.Sprintf("%s/indexes/posts_%s/search", s.host, params.Lang)
 
 	var raw meiliSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("failed to decode search response: %w", err)
+	if err := s.postMeili(url, reqBody, &raw); err != nil {
+		return nil, err
 	}
 
 	hits := make([]models.SearchHit, 0, len(raw.Hits))
@@ -171,6 +147,77 @@ func (s *SearchService) Search(params SearchParams) (*models.SearchResponse, err
 		Hits:               hits,
 		FacetDistribution:  raw.FacetDistribution,
 	}, nil
+}
+
+type meiliFacetSearchRequest struct {
+	FacetName  string `json:"facetName"`
+	FacetQuery string `json:"facetQuery,omitempty"`
+}
+
+type meiliFacetSearchResponse struct {
+	FacetHits []struct {
+		Value string `json:"value"`
+		Count int    `json:"count"`
+	} `json:"facetHits"`
+}
+
+// SearchTags runs a facet search over the "tags" attribute of the
+// per-language index: a type-ahead over tag values with post counts,
+// ordered by count (the index's sortFacetValuesBy setting). An empty query
+// returns the most-used tags.
+func (s *SearchService) SearchTags(lang, query string) (*models.TagSearchResponse, error) {
+	reqBody := meiliFacetSearchRequest{
+		FacetName:  "tags",
+		FacetQuery: query,
+	}
+
+	url := fmt.Sprintf("%s/indexes/posts_%s/facet-search", s.host, lang)
+
+	var raw meiliFacetSearchResponse
+	if err := s.postMeili(url, reqBody, &raw); err != nil {
+		return nil, err
+	}
+
+	tags := make([]models.TagHit, 0, len(raw.FacetHits))
+	for _, hit := range raw.FacetHits {
+		tags = append(tags, models.TagHit{Tag: hit.Value, Count: hit.Count})
+	}
+
+	return &models.TagSearchResponse{Query: query, Tags: tags}, nil
+}
+
+// postMeili sends a JSON payload to a Meilisearch endpoint and decodes the
+// 200 response into out; any transport or non-200 failure is wrapped in
+// ErrSearchUnavailable where appropriate.
+func (s *SearchService) postMeili(url string, payload any, out any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrSearchUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%w: status %d: %s", ErrSearchUnavailable, resp.StatusCode, string(respBody))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
 }
 
 // lookupThumbnail joins back to post_contents by (lang, path) — the same

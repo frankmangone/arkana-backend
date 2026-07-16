@@ -131,3 +131,35 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	httputil.WriteJSON(w, http.StatusOK, result)
 }
+
+// SearchTags handles GET /api/search/tags?q=<prefix>&lang=<lang>
+// A type-ahead over tag values; an empty (or absent) q returns the
+// most-used tags.
+func (h *SearchHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+
+	lang := r.URL.Query().Get("lang")
+	if lang == "" {
+		lang = "en"
+	}
+	if !supportedLangs[lang] {
+		httputil.WriteError(w, http.StatusBadRequest, "unsupported lang parameter")
+		return
+	}
+
+	log.Printf("[Search] tag search query=%q lang=%q", query, lang)
+
+	result, err := h.service.SearchTags(lang, query)
+	if err != nil {
+		if errors.Is(err, services.ErrSearchUnavailable) {
+			log.Printf("[Search] backend unavailable: %v", err)
+			httputil.WriteError(w, http.StatusServiceUnavailable, "search is currently unavailable")
+			return
+		}
+		log.Printf("[Search] tag search failed: %v", err)
+		httputil.WriteError(w, http.StatusInternalServerError, "tag search failed")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, result)
+}
