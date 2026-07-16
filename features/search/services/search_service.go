@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"arkana/features/search/models"
 )
@@ -39,6 +41,8 @@ func NewSearchService(db *sql.DB, host, masterKey string) *SearchService {
 type meiliSearchRequest struct {
 	Q                     string   `json:"q"`
 	Limit                 int      `json:"limit"`
+	Filter                string   `json:"filter,omitempty"`
+	Facets                []string `json:"facets,omitempty"`
 	AttributesToRetrieve  []string `json:"attributesToRetrieve"`
 	AttributesToCrop      []string `json:"attributesToCrop"`
 	CropLength            int      `json:"cropLength"`
@@ -58,52 +62,69 @@ type meiliHit struct {
 }
 
 type meiliSearchResponse struct {
-	Hits               []meiliHit `json:"hits"`
-	Query              string     `json:"query"`
-	EstimatedTotalHits int        `json:"estimatedTotalHits"`
+	Hits               []meiliHit                `json:"hits"`
+	Query              string                    `json:"query"`
+	EstimatedTotalHits int                       `json:"estimatedTotalHits"`
+	FacetDistribution  map[string]map[string]int `json:"facetDistribution"`
+}
+
+// SearchParams are the inputs to Search. The handler guarantees that Query
+// and Tags are not both empty; with an empty Query, Meilisearch performs a
+// placeholder search returning every document matching the filter — that is
+// what pure tag browsing relies on.
+type SearchParams struct {
+	Lang     string
+	Query    string
+	Tags     []string
+	MatchAll bool // true: posts must carry every tag; false: any of them
+	Facets   bool // include tag counts for the result set
+	Limit    int
+}
+
+// buildTagFilter renders a Meilisearch filter expression over the "tags"
+// attribute. Values are quoted so a tag can never break out of the
+// expression.
+func buildTagFilter(tags []string, matchAll bool) string {
+	quoted := make([]string, len(tags))
+	for i, tag := range tags {
+		quoted[i] = strconv.Quote(tag)
+	}
+
+	if matchAll {
+		parts := make([]string, len(quoted))
+		for i, q := range quoted {
+			parts[i] = "tags = " + q
+		}
+		return strings.Join(parts, " AND ")
+	}
+
+	return "tags IN [" + strings.Join(quoted, ", ") + "]"
 }
 
 // Search queries the per-language Meilisearch index ("posts_<lang>") and
 // returns a flattened result set.
-func (s *SearchService) Search(lang, query string, limit int) (*models.SearchResponse, error) {
+func (s *SearchService) Search(params SearchParams) (*models.SearchResponse, error) {
 	reqBody := meiliSearchRequest{
-		Q:                     query,
-		Limit:                 limit,
+		Q:                     params.Query,
+		Limit:                 params.Limit,
 		AttributesToRetrieve:  []string{"id", "lang", "path", "title", "description", "tags"},
 		AttributesToCrop:      []string{"content"},
 		CropLength:            20,
 		AttributesToHighlight: []string{"content"},
 	}
 
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode search request: %w", err)
+	if len(params.Tags) > 0 {
+		reqBody.Filter = buildTagFilter(params.Tags, params.MatchAll)
+	}
+	if params.Facets {
+		reqBody.Facets = []string{"tags"}
 	}
 
-	indexUID := "posts_" + lang
-	url := fmt.Sprintf("%s/indexes/%s/search", s.host, indexUID)
-
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build search request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.masterKey)
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSearchUnavailable, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%w: status %d: %s", ErrSearchUnavailable, resp.StatusCode, string(body))
-	}
+	url := fmt.Sprintf("%s/indexes/posts_%s/search", s.host, params.Lang)
 
 	var raw meiliSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("failed to decode search response: %w", err)
+	if err := s.postMeili(url, reqBody, &raw); err != nil {
+		return nil, err
 	}
 
 	hits := make([]models.SearchHit, 0, len(raw.Hits))
@@ -124,7 +145,79 @@ func (s *SearchService) Search(lang, query string, limit int) (*models.SearchRes
 		Query:              raw.Query,
 		EstimatedTotalHits: raw.EstimatedTotalHits,
 		Hits:               hits,
+		FacetDistribution:  raw.FacetDistribution,
 	}, nil
+}
+
+type meiliFacetSearchRequest struct {
+	FacetName  string `json:"facetName"`
+	FacetQuery string `json:"facetQuery,omitempty"`
+}
+
+type meiliFacetSearchResponse struct {
+	FacetHits []struct {
+		Value string `json:"value"`
+		Count int    `json:"count"`
+	} `json:"facetHits"`
+}
+
+// SearchTags runs a facet search over the "tags" attribute of the
+// per-language index: a type-ahead over tag values with post counts,
+// ordered by count (the index's sortFacetValuesBy setting). An empty query
+// returns the most-used tags.
+func (s *SearchService) SearchTags(lang, query string) (*models.TagSearchResponse, error) {
+	reqBody := meiliFacetSearchRequest{
+		FacetName:  "tags",
+		FacetQuery: query,
+	}
+
+	url := fmt.Sprintf("%s/indexes/posts_%s/facet-search", s.host, lang)
+
+	var raw meiliFacetSearchResponse
+	if err := s.postMeili(url, reqBody, &raw); err != nil {
+		return nil, err
+	}
+
+	tags := make([]models.TagHit, 0, len(raw.FacetHits))
+	for _, hit := range raw.FacetHits {
+		tags = append(tags, models.TagHit{Tag: hit.Value, Count: hit.Count})
+	}
+
+	return &models.TagSearchResponse{Query: query, Tags: tags}, nil
+}
+
+// postMeili sends a JSON payload to a Meilisearch endpoint and decodes the
+// 200 response into out; any transport or non-200 failure is wrapped in
+// ErrSearchUnavailable where appropriate.
+func (s *SearchService) postMeili(url string, payload any, out any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.masterKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrSearchUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%w: status %d: %s", ErrSearchUnavailable, resp.StatusCode, string(respBody))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
 }
 
 // lookupThumbnail joins back to post_contents by (lang, path) — the same
