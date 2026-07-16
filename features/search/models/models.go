@@ -15,8 +15,12 @@ type SearchHit struct {
 }
 
 // SearchResponse is the API response for a search request.
+// FacetDistribution is only present when facets were requested; it maps
+// facet name -> value -> count within the current result set
+// (e.g. {"tags": {"plonk": 2}}).
 type SearchResponse struct {
-	Query              string      `json:"query"`
-	EstimatedTotalHits int         `json:"estimatedTotalHits"`
-	Hits               []SearchHit `json:"hits"`
+	Query              string                    `json:"query"`
+	EstimatedTotalHits int                       `json:"estimatedTotalHits"`
+	Hits               []SearchHit               `json:"hits"`
+	FacetDistribution  map[string]map[string]int `json:"facetDistribution,omitempty"`
 }

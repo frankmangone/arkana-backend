@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"arkana/features/search/models"
 )
@@ -39,6 +41,8 @@ func NewSearchService(db *sql.DB, host, masterKey string) *SearchService {
 type meiliSearchRequest struct {
 	Q                     string   `json:"q"`
 	Limit                 int      `json:"limit"`
+	Filter                string   `json:"filter,omitempty"`
+	Facets                []string `json:"facets,omitempty"`
 	AttributesToRetrieve  []string `json:"attributesToRetrieve"`
 	AttributesToCrop      []string `json:"attributesToCrop"`
 	CropLength            int      `json:"cropLength"`
@@ -58,21 +62,62 @@ type meiliHit struct {
 }
 
 type meiliSearchResponse struct {
-	Hits               []meiliHit `json:"hits"`
-	Query              string     `json:"query"`
-	EstimatedTotalHits int        `json:"estimatedTotalHits"`
+	Hits               []meiliHit                `json:"hits"`
+	Query              string                    `json:"query"`
+	EstimatedTotalHits int                       `json:"estimatedTotalHits"`
+	FacetDistribution  map[string]map[string]int `json:"facetDistribution"`
+}
+
+// SearchParams are the inputs to Search. The handler guarantees that Query
+// and Tags are not both empty; with an empty Query, Meilisearch performs a
+// placeholder search returning every document matching the filter — that is
+// what pure tag browsing relies on.
+type SearchParams struct {
+	Lang     string
+	Query    string
+	Tags     []string
+	MatchAll bool // true: posts must carry every tag; false: any of them
+	Facets   bool // include tag counts for the result set
+	Limit    int
+}
+
+// buildTagFilter renders a Meilisearch filter expression over the "tags"
+// attribute. Values are quoted so a tag can never break out of the
+// expression.
+func buildTagFilter(tags []string, matchAll bool) string {
+	quoted := make([]string, len(tags))
+	for i, tag := range tags {
+		quoted[i] = strconv.Quote(tag)
+	}
+
+	if matchAll {
+		parts := make([]string, len(quoted))
+		for i, q := range quoted {
+			parts[i] = "tags = " + q
+		}
+		return strings.Join(parts, " AND ")
+	}
+
+	return "tags IN [" + strings.Join(quoted, ", ") + "]"
 }
 
 // Search queries the per-language Meilisearch index ("posts_<lang>") and
 // returns a flattened result set.
-func (s *SearchService) Search(lang, query string, limit int) (*models.SearchResponse, error) {
+func (s *SearchService) Search(params SearchParams) (*models.SearchResponse, error) {
 	reqBody := meiliSearchRequest{
-		Q:                     query,
-		Limit:                 limit,
+		Q:                     params.Query,
+		Limit:                 params.Limit,
 		AttributesToRetrieve:  []string{"id", "lang", "path", "title", "description", "tags"},
 		AttributesToCrop:      []string{"content"},
 		CropLength:            20,
 		AttributesToHighlight: []string{"content"},
+	}
+
+	if len(params.Tags) > 0 {
+		reqBody.Filter = buildTagFilter(params.Tags, params.MatchAll)
+	}
+	if params.Facets {
+		reqBody.Facets = []string{"tags"}
 	}
 
 	payload, err := json.Marshal(reqBody)
@@ -80,7 +125,7 @@ func (s *SearchService) Search(lang, query string, limit int) (*models.SearchRes
 		return nil, fmt.Errorf("failed to encode search request: %w", err)
 	}
 
-	indexUID := "posts_" + lang
+	indexUID := "posts_" + params.Lang
 	url := fmt.Sprintf("%s/indexes/%s/search", s.host, indexUID)
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
@@ -124,6 +169,7 @@ func (s *SearchService) Search(lang, query string, limit int) (*models.SearchRes
 		Query:              raw.Query,
 		EstimatedTotalHits: raw.EstimatedTotalHits,
 		Hits:               hits,
+		FacetDistribution:  raw.FacetDistribution,
 	}, nil
 }
 
