@@ -107,8 +107,18 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("[Search] query=%q lang=%q tags=%v matchAll=%t facets=%t limit=%d",
-		query, lang, tags, matchAll, facets, limit)
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			httputil.WriteError(w, http.StatusBadRequest, "invalid offset parameter")
+			return
+		}
+		offset = parsed
+	}
+
+	log.Printf("[Search] query=%q lang=%q tags=%v matchAll=%t facets=%t limit=%d offset=%d",
+		query, lang, tags, matchAll, facets, limit, offset)
 
 	result, err := h.service.Search(services.SearchParams{
 		Lang:     lang,
@@ -117,6 +127,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		MatchAll: matchAll,
 		Facets:   facets,
 		Limit:    limit,
+		Offset:   offset,
 	})
 	if err != nil {
 		if errors.Is(err, services.ErrSearchUnavailable) {
