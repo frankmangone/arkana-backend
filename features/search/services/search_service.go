@@ -41,6 +41,7 @@ func NewSearchService(db *sql.DB, host, masterKey string) *SearchService {
 type meiliSearchRequest struct {
 	Q                     string   `json:"q"`
 	Limit                 int      `json:"limit"`
+	Offset                int      `json:"offset,omitempty"`
 	Filter                string   `json:"filter,omitempty"`
 	Facets                []string `json:"facets,omitempty"`
 	AttributesToRetrieve  []string `json:"attributesToRetrieve"`
@@ -79,6 +80,7 @@ type SearchParams struct {
 	MatchAll bool // true: posts must carry every tag; false: any of them
 	Facets   bool // include tag counts for the result set
 	Limit    int
+	Offset   int
 }
 
 // buildTagFilter renders a Meilisearch filter expression over the "tags"
@@ -107,6 +109,7 @@ func (s *SearchService) Search(params SearchParams) (*models.SearchResponse, err
 	reqBody := meiliSearchRequest{
 		Q:                     params.Query,
 		Limit:                 params.Limit,
+		Offset:                params.Offset,
 		AttributesToRetrieve:  []string{"id", "lang", "path", "title", "description", "tags"},
 		AttributesToCrop:      []string{"content"},
 		CropLength:            20,
