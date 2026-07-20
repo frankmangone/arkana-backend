@@ -4,6 +4,8 @@ import (
 	"arkana/features/posts/models"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 )
 
 type PostService struct {
@@ -156,6 +158,54 @@ func (s *PostService) ToggleRead(postID, userID int) (read bool, err error) {
 	}
 
 	return read, nil
+}
+
+// GetReadStatuses returns path -> read status for the given user across many
+// posts in one query, so a whole reading list's progress can be fetched in a
+// single round trip instead of one request per article. Paths for posts that
+// don't exist yet (never liked/read/commented on) default to false, same as
+// paths the user simply hasn't read.
+func (s *PostService) GetReadStatuses(paths []string, userID int) (map[string]bool, error) {
+	result := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		result[p] = false
+	}
+
+	if userID <= 0 || len(paths) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(paths))
+	args := make([]interface{}, 0, len(paths)+1)
+	for i, p := range paths {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+	args = append(args, userID)
+
+	query := fmt.Sprintf(
+		`SELECT p.path_identifier
+		 FROM posts p
+		 JOIN post_reads r ON r.post_id = p.id
+		 WHERE p.path_identifier IN (%s) AND r.user_id = ?`,
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		result[path] = true
+	}
+
+	return result, rows.Err()
 }
 
 func (s *PostService) getByID(id int) (*models.Post, error) {

@@ -126,3 +126,52 @@ func TestToggleRead(t *testing.T) {
 		}
 	})
 }
+
+func TestGetReadStatuses(t *testing.T) {
+	db := setupTestDB(t)
+	svc := services.NewPostService(db)
+	userID := insertTestUser(t, db, "batchreader@example.com")
+
+	post1, _ := svc.GetOrCreateByPath("batch-post-1")
+	_, _ = svc.GetOrCreateByPath("batch-post-2")
+	svc.ToggleRead(post1.ID, userID) // mark post1 as read; post2 stays unread
+
+	t.Run("returns read status per path", func(t *testing.T) {
+		statuses, err := svc.GetReadStatuses(
+			[]string{"batch-post-1", "batch-post-2", "never-created-post"},
+			userID,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !statuses["batch-post-1"] {
+			t.Error("batch-post-1 = false, want true")
+		}
+		if statuses["batch-post-2"] {
+			t.Error("batch-post-2 = true, want false")
+		}
+		if statuses["never-created-post"] {
+			t.Error("never-created-post = true, want false")
+		}
+	})
+
+	t.Run("returns all false for anonymous user", func(t *testing.T) {
+		statuses, err := svc.GetReadStatuses([]string{"batch-post-1"}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if statuses["batch-post-1"] {
+			t.Error("batch-post-1 = true, want false for userID 0")
+		}
+	})
+
+	t.Run("returns empty map for no paths", func(t *testing.T) {
+		statuses, err := svc.GetReadStatuses([]string{}, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(statuses) != 0 {
+			t.Errorf("len(statuses) = %d, want 0", len(statuses))
+		}
+	})
+}
