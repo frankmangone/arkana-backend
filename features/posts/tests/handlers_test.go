@@ -409,3 +409,50 @@ func TestToggleReadHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestGetReadStatusesHandler(t *testing.T) {
+	db := setupTestDB(t)
+	router := setupRouter(t, db)
+	userID := insertTestUser(t, db, "batchhandler@example.com")
+	token := generateTestJWT(t, userID, "batchhandler@example.com")
+	insertTestPost(t, db, "batch-a")
+	insertTestPost(t, db, "batch-b")
+
+	t.Run("returns read statuses for given paths", func(t *testing.T) {
+		readReq := httptest.NewRequest("POST", "/api/posts/batch-a/read", nil)
+		readReq.Header.Set("Authorization", "Bearer "+token)
+		readRec := httptest.NewRecorder()
+		router.ServeHTTP(readRec, readReq)
+		if readRec.Code != http.StatusOK {
+			t.Fatalf("mark read failed: status = %d; body: %s", readRec.Code, readRec.Body.String())
+		}
+
+		req := httptest.NewRequest("GET", "/api/posts/reads?paths=batch-a&paths=batch-b", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var statuses map[string]bool
+		json.NewDecoder(rec.Body).Decode(&statuses)
+		if !statuses["batch-a"] {
+			t.Error("batch-a = false, want true")
+		}
+		if statuses["batch-b"] {
+			t.Error("batch-b = true, want false")
+		}
+	})
+
+	t.Run("rejects unauthenticated request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/posts/reads?paths=batch-a", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
+}

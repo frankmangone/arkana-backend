@@ -16,6 +16,7 @@ func RegisterRoutes(router *mux.Router, ps *services.PostService, cs *services.C
 
 	router.HandleFunc("/api/posts/{path:.*}/info", infoHandler.GetPostInfo).Methods("GET", "OPTIONS")
 	router.Handle("/api/posts/{path:.*}/like", auth.RequireAuth(http.HandlerFunc(likeHandler.ToggleLike))).Methods("POST", "OPTIONS")
+	router.Handle("/api/posts/reads", auth.RequireAuth(http.HandlerFunc(readHandler.GetReadStatuses))).Methods("GET", "OPTIONS")
 	router.Handle("/api/posts/{path:.*}/read", auth.RequireAuth(http.HandlerFunc(readHandler.ToggleRead))).Methods("POST", "OPTIONS")
 	router.HandleFunc("/api/posts/{path:.*}/comments", commentHandler.GetComments).Methods("GET", "OPTIONS")
 	router.Handle("/api/posts/{path:.*}/comments", auth.RequireAuth(http.HandlerFunc(commentHandler.CreateComment))).Methods("POST", "OPTIONS")

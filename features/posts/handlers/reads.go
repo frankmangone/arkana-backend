@@ -55,3 +55,25 @@ func (h *ReadHandler) ToggleRead(w http.ResponseWriter, r *http.Request) {
 
 	httputil.WriteJSON(w, http.StatusOK, models.ToggleReadResponse{Read: read})
 }
+
+// GetReadStatuses handles GET /api/posts/reads?paths=a&paths=b&...
+// Returns a flat JSON object of path -> read bool for the authenticated user.
+// Pure read, no side effects — does not mark anything as read.
+func (h *ReadHandler) GetReadStatuses(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middlewares.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	paths := r.URL.Query()["paths"]
+
+	statuses, err := h.postService.GetReadStatuses(paths, userID)
+	if err != nil {
+		log.Printf("[Read] Failed to get read statuses for user %d: %v", userID, err)
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to get read statuses")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, statuses)
+}
