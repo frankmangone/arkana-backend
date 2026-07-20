@@ -222,8 +222,8 @@ func (s *PostService) getByID(id int) (*models.Post, error) {
 
 var ErrPostNotFound = errors.New("post not found")
 
-// GetPostInfo returns post info by path, including whether a specific user has liked it.
-// If userID is 0, liked will always be false.
+// GetPostInfo returns post info by path, including whether a specific user has
+// liked and read it. If userID is 0, liked and read are always false.
 func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResponse, error) {
 	var likeCount int
 	var postID int
@@ -240,7 +240,7 @@ func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResp
 		return nil, err
 	}
 
-	var liked bool
+	var liked, read bool
 	if userID > 0 {
 		var exists int
 		err = s.db.QueryRow(
@@ -253,11 +253,23 @@ func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResp
 		} else if err != sql.ErrNoRows {
 			return nil, err
 		}
+
+		err = s.db.QueryRow(
+			"SELECT 1 FROM post_reads WHERE post_id = ? AND user_id = ?",
+			postID, userID,
+		).Scan(&exists)
+
+		if err == nil {
+			read = true
+		} else if err != sql.ErrNoRows {
+			return nil, err
+		}
 	}
 
 	return &models.PostInfoResponse{
 		Path:      path,
 		LikeCount: likeCount,
 		Liked:     liked,
+		Read:      read,
 	}, nil
 }

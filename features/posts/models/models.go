@@ -44,4 +44,5 @@ type PostInfoResponse struct {
 	Path      string `json:"path"`
 	LikeCount int    `json:"like_count"`
 	Liked     bool   `json:"liked"`
+	Read      bool   `json:"read"`
 }

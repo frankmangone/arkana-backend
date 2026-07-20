@@ -175,3 +175,42 @@ func TestGetReadStatuses(t *testing.T) {
 		}
 	})
 }
+
+func TestGetPostInfoReadField(t *testing.T) {
+	db := setupTestDB(t)
+	svc := services.NewPostService(db)
+	userID := insertTestUser(t, db, "infosreader@example.com")
+	post, _ := svc.GetOrCreateByPath("info-read-post")
+
+	t.Run("read is false before marking read", func(t *testing.T) {
+		info, err := svc.GetPostInfo("info-read-post", userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Read {
+			t.Error("read = true, want false")
+		}
+	})
+
+	t.Run("read is true after marking read", func(t *testing.T) {
+		svc.ToggleRead(post.ID, userID)
+
+		info, err := svc.GetPostInfo("info-read-post", userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Read {
+			t.Error("read = false, want true")
+		}
+	})
+
+	t.Run("read is false for anonymous request", func(t *testing.T) {
+		info, err := svc.GetPostInfo("info-read-post", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Read {
+			t.Error("read = true, want false for userID 0")
+		}
+	})
+}

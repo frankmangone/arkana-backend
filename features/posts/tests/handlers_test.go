@@ -312,6 +312,36 @@ func TestGetPostInfoHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("returns read status for authenticated user", func(t *testing.T) {
+		insertTestPost(t, db, "read-info-post")
+		uid := insertTestUser(t, db, "readinfo@example.com")
+		tok := generateTestJWT(t, uid, "readinfo@example.com")
+
+		req := httptest.NewRequest("POST", "/api/posts/read-info-post/read", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("mark read failed: status = %d; body: %s", rec.Code, rec.Body.String())
+		}
+
+		req = httptest.NewRequest("GET", fmt.Sprintf("/api/posts/read-info-post/info?user=%d", uid), nil)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.PostInfoResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if !resp.Read {
+			t.Error("read = false, want true")
+		}
+	})
+
 	t.Run("handles paths with slashes", func(t *testing.T) {
 		insertTestPost(t, db, "category/my-post")
 
