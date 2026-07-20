@@ -31,7 +31,7 @@ func RegisterRoutes(router *mux.Router, db *sql.DB, cfg *config.Config) *middlew
 	router.HandleFunc("/api/auth/refresh", RefreshHandler(authService)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/api/auth/logout", LogoutHandler(authService)).Methods("POST", "OPTIONS")
 
-	router.Handle("/api/auth/me", authMiddleware.RequireAuth(MeHandler(authService))).Methods("GET")
+	router.Handle("/api/auth/me", authMiddleware.RequireAuth(MeHandler(authService))).Methods("GET", "OPTIONS")
 
 	return authMiddleware
 }

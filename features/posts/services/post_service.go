@@ -4,6 +4,8 @@ import (
 	"arkana/features/posts/models"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 )
 
 type PostService struct {
@@ -113,6 +115,99 @@ func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int,
 	return liked, likeCount, nil
 }
 
+// ToggleRead marks a post as read/unread for the given user. There is no
+// counter to keep in sync (unlike ToggleLike's like_count) — read status has
+// no public aggregate in this milestone.
+func (s *PostService) ToggleRead(postID, userID int) (read bool, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	var exists int
+	err = tx.QueryRow(
+		"SELECT 1 FROM post_reads WHERE post_id = ? AND user_id = ?",
+		postID, userID,
+	).Scan(&exists)
+
+	if err == sql.ErrNoRows {
+		_, err = tx.Exec(
+			"INSERT INTO post_reads (post_id, user_id) VALUES (?, ?)",
+			postID, userID,
+		)
+		if err != nil {
+			return false, err
+		}
+		read = true
+	} else if err != nil {
+		return false, err
+	} else {
+		_, err = tx.Exec(
+			"DELETE FROM post_reads WHERE post_id = ? AND user_id = ?",
+			postID, userID,
+		)
+		if err != nil {
+			return false, err
+		}
+		read = false
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+
+	return read, nil
+}
+
+// GetReadStatuses returns path -> read status for the given user across many
+// posts in one query, so a whole reading list's progress can be fetched in a
+// single round trip instead of one request per article. Paths for posts that
+// don't exist yet (never liked/read/commented on) default to false, same as
+// paths the user simply hasn't read.
+func (s *PostService) GetReadStatuses(paths []string, userID int) (map[string]bool, error) {
+	result := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		result[p] = false
+	}
+
+	if userID <= 0 || len(paths) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(paths))
+	args := make([]interface{}, 0, len(paths)+1)
+	for i, p := range paths {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+	args = append(args, userID)
+
+	query := fmt.Sprintf(
+		`SELECT p.path_identifier
+		 FROM posts p
+		 JOIN post_reads r ON r.post_id = p.id
+		 WHERE p.path_identifier IN (%s) AND r.user_id = ?`,
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		result[path] = true
+	}
+
+	return result, rows.Err()
+}
+
 func (s *PostService) getByID(id int) (*models.Post, error) {
 	var p models.Post
 	err := s.db.QueryRow(
@@ -127,8 +222,8 @@ func (s *PostService) getByID(id int) (*models.Post, error) {
 
 var ErrPostNotFound = errors.New("post not found")
 
-// GetPostInfo returns post info by path, including whether a specific user has liked it.
-// If userID is 0, liked will always be false.
+// GetPostInfo returns post info by path, including whether a specific user has
+// liked and read it. If userID is 0, liked and read are always false.
 func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResponse, error) {
 	var likeCount int
 	var postID int
@@ -145,7 +240,7 @@ func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResp
 		return nil, err
 	}
 
-	var liked bool
+	var liked, read bool
 	if userID > 0 {
 		var exists int
 		err = s.db.QueryRow(
@@ -158,11 +253,23 @@ func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResp
 		} else if err != sql.ErrNoRows {
 			return nil, err
 		}
+
+		err = s.db.QueryRow(
+			"SELECT 1 FROM post_reads WHERE post_id = ? AND user_id = ?",
+			postID, userID,
+		).Scan(&exists)
+
+		if err == nil {
+			read = true
+		} else if err != sql.ErrNoRows {
+			return nil, err
+		}
 	}
 
 	return &models.PostInfoResponse{
 		Path:      path,
 		LikeCount: likeCount,
 		Liked:     liked,
+		Read:      read,
 	}, nil
 }

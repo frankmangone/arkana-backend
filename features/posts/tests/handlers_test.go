@@ -312,6 +312,36 @@ func TestGetPostInfoHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("returns read status for authenticated user", func(t *testing.T) {
+		insertTestPost(t, db, "read-info-post")
+		uid := insertTestUser(t, db, "readinfo@example.com")
+		tok := generateTestJWT(t, uid, "readinfo@example.com")
+
+		req := httptest.NewRequest("POST", "/api/posts/read-info-post/read", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("mark read failed: status = %d; body: %s", rec.Code, rec.Body.String())
+		}
+
+		req = httptest.NewRequest("GET", fmt.Sprintf("/api/posts/read-info-post/info?user=%d", uid), nil)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.PostInfoResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if !resp.Read {
+			t.Error("read = false, want true")
+		}
+	})
+
 	t.Run("handles paths with slashes", func(t *testing.T) {
 		insertTestPost(t, db, "category/my-post")
 
@@ -328,6 +358,101 @@ func TestGetPostInfoHandler(t *testing.T) {
 
 		if resp.Path != "category/my-post" {
 			t.Errorf("path = %q, want %q", resp.Path, "category/my-post")
+		}
+	})
+}
+
+func TestToggleReadHandler(t *testing.T) {
+	db := setupTestDB(t)
+	router := setupRouter(t, db)
+	userID := insertTestUser(t, db, "readhandler@example.com")
+	token := generateTestJWT(t, userID, "readhandler@example.com")
+	insertTestPost(t, db, "read-path")
+
+	t.Run("marks a post read", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/posts/read-path/read", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.ToggleReadResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if !resp.Read {
+			t.Error("read = false, want true")
+		}
+	})
+
+	t.Run("marks unread on second call", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/posts/read-path/read", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		var resp models.ToggleReadResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if resp.Read {
+			t.Error("read = true, want false")
+		}
+	})
+
+	t.Run("rejects unauthenticated request", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/posts/read-path/read", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
+}
+
+func TestGetReadStatusesHandler(t *testing.T) {
+	db := setupTestDB(t)
+	router := setupRouter(t, db)
+	userID := insertTestUser(t, db, "batchhandler@example.com")
+	token := generateTestJWT(t, userID, "batchhandler@example.com")
+	insertTestPost(t, db, "batch-a")
+	insertTestPost(t, db, "batch-b")
+
+	t.Run("returns read statuses for given paths", func(t *testing.T) {
+		readReq := httptest.NewRequest("POST", "/api/posts/batch-a/read", nil)
+		readReq.Header.Set("Authorization", "Bearer "+token)
+		readRec := httptest.NewRecorder()
+		router.ServeHTTP(readRec, readReq)
+		if readRec.Code != http.StatusOK {
+			t.Fatalf("mark read failed: status = %d; body: %s", readRec.Code, readRec.Body.String())
+		}
+
+		req := httptest.NewRequest("GET", "/api/posts/reads?paths=batch-a&paths=batch-b", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var statuses map[string]bool
+		json.NewDecoder(rec.Body).Decode(&statuses)
+		if !statuses["batch-a"] {
+			t.Error("batch-a = false, want true")
+		}
+		if statuses["batch-b"] {
+			t.Error("batch-b = true, want false")
+		}
+	})
+
+	t.Run("rejects unauthenticated request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/posts/reads?paths=batch-a", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
 		}
 	})
 }
