@@ -113,6 +113,51 @@ func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int,
 	return liked, likeCount, nil
 }
 
+// ToggleRead marks a post as read/unread for the given user. There is no
+// counter to keep in sync (unlike ToggleLike's like_count) — read status has
+// no public aggregate in this milestone.
+func (s *PostService) ToggleRead(postID, userID int) (read bool, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	var exists int
+	err = tx.QueryRow(
+		"SELECT 1 FROM post_reads WHERE post_id = ? AND user_id = ?",
+		postID, userID,
+	).Scan(&exists)
+
+	if err == sql.ErrNoRows {
+		_, err = tx.Exec(
+			"INSERT INTO post_reads (post_id, user_id) VALUES (?, ?)",
+			postID, userID,
+		)
+		if err != nil {
+			return false, err
+		}
+		read = true
+	} else if err != nil {
+		return false, err
+	} else {
+		_, err = tx.Exec(
+			"DELETE FROM post_reads WHERE post_id = ? AND user_id = ?",
+			postID, userID,
+		)
+		if err != nil {
+			return false, err
+		}
+		read = false
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+
+	return read, nil
+}
+
 func (s *PostService) getByID(id int) (*models.Post, error) {
 	var p models.Post
 	err := s.db.QueryRow(

@@ -84,3 +84,45 @@ func TestToggleLike(t *testing.T) {
 		}
 	})
 }
+
+func TestToggleRead(t *testing.T) {
+	db := setupTestDB(t)
+	svc := services.NewPostService(db)
+	userID := insertTestUser(t, db, "reader@example.com")
+	post, _ := svc.GetOrCreateByPath("read-test-post")
+
+	t.Run("first toggle marks read", func(t *testing.T) {
+		read, err := svc.ToggleRead(post.ID, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !read {
+			t.Error("read = false, want true")
+		}
+	})
+
+	t.Run("second toggle marks unread", func(t *testing.T) {
+		read, err := svc.ToggleRead(post.ID, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read {
+			t.Error("read = true, want false")
+		}
+	})
+
+	t.Run("multiple users", func(t *testing.T) {
+		user2 := insertTestUser(t, db, "reader2@example.com")
+
+		svc.ToggleRead(post.ID, userID) // mark read
+		svc.ToggleRead(post.ID, user2)  // mark read
+
+		read, err := svc.ToggleRead(post.ID, userID) // mark unread
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read {
+			t.Error("read = true, want false")
+		}
+	})
+}
