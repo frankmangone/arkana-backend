@@ -40,6 +40,10 @@ type ToggleLikeResponse struct {
 	LikeCount int  `json:"like_count"`
 }
 
+type ToggleReadResponse struct {
+	Read bool `json:"read"`
+}
+
 type PostInfoResponse struct {
 	Path      string `json:"path"`
 	LikeCount int    `json:"like_count"`

@@ -361,3 +361,51 @@ func TestGetPostInfoHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestToggleReadHandler(t *testing.T) {
+	db := setupTestDB(t)
+	router := setupRouter(t, db)
+	userID := insertTestUser(t, db, "readhandler@example.com")
+	token := generateTestJWT(t, userID, "readhandler@example.com")
+	insertTestPost(t, db, "read-path")
+
+	t.Run("marks a post read", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/posts/read-path/read", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.ToggleReadResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if !resp.Read {
+			t.Error("read = false, want true")
+		}
+	})
+
+	t.Run("marks unread on second call", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/posts/read-path/read", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		var resp models.ToggleReadResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if resp.Read {
+			t.Error("read = true, want false")
+		}
+	})
+
+	t.Run("rejects unauthenticated request", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/posts/read-path/read", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
+}
