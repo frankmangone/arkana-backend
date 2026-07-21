@@ -81,6 +81,68 @@ func TestNotificationServiceList(t *testing.T) {
 	})
 }
 
+func TestNotificationServiceListJoins(t *testing.T) {
+	db := setupTestDB(t)
+	svc := services.NewNotificationService(db)
+	recipient := insertTestUser(t, db, "joinrecipient@example.com")
+	actor := insertTestUser(t, db, "joinactor@example.com")
+
+	t.Run("includes actor username", func(t *testing.T) {
+		postID := 999 // no matching post row — exercises the LEFT JOIN null case
+		if err := svc.Create(db, recipient, actor, models.TypePostLiked, &postID, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		page, err := svc.List(recipient, 20, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := page.Notifications[0]
+		if n.ActorUsername != "joinactor@example.com" {
+			t.Errorf("actor_username = %q, want %q", n.ActorUsername, "joinactor@example.com")
+		}
+		if n.PostPath != nil {
+			t.Errorf("post_path = %v, want nil (no matching post row)", *n.PostPath)
+		}
+	})
+
+	t.Run("includes post_path when the post exists", func(t *testing.T) {
+		post := insertTestPost(t, db, "cryptography-101/hashing")
+		if err := svc.Create(db, recipient, actor, models.TypePostLiked, &post, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		page, err := svc.List(recipient, 20, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := page.Notifications[0]
+		if n.PostPath == nil || *n.PostPath != "cryptography-101/hashing" {
+			t.Errorf("post_path = %v, want %q", n.PostPath, "cryptography-101/hashing")
+		}
+	})
+
+	t.Run("includes actor avatar when set", func(t *testing.T) {
+		avatarUser := insertTestUser(t, db, "avataractor@example.com")
+		if _, err := db.Exec("UPDATE users SET avatar_url = ? WHERE id = ?", "https://example.com/a.png", avatarUser); err != nil {
+			t.Fatal(err)
+		}
+		post := insertTestPost(t, db, "avatar-post")
+		if err := svc.Create(db, recipient, avatarUser, models.TypePostLiked, &post, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		page, err := svc.List(recipient, 20, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := page.Notifications[0]
+		if n.ActorAvatarURL == nil || *n.ActorAvatarURL != "https://example.com/a.png" {
+			t.Errorf("actor_avatar_url = %v, want %q", n.ActorAvatarURL, "https://example.com/a.png")
+		}
+	})
+}
+
 func TestNotificationServiceMarkRead(t *testing.T) {
 	db := setupTestDB(t)
 	svc := services.NewNotificationService(db)

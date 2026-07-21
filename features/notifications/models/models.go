@@ -13,8 +13,11 @@ type Notification struct {
 	ID              int        `json:"id"`
 	RecipientUserID int        `json:"recipient_user_id"`
 	ActorUserID     int        `json:"actor_user_id"`
+	ActorUsername   string     `json:"actor_username"`
+	ActorAvatarURL  *string    `json:"actor_avatar_url,omitempty"`
 	Type            string     `json:"type"`
 	PostID          *int       `json:"post_id,omitempty"`
+	PostPath        *string    `json:"post_path,omitempty"`
 	CommentID       *int       `json:"comment_id,omitempty"`
 	ReadAt          *time.Time `json:"read_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`

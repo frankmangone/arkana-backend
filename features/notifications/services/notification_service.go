@@ -37,13 +37,19 @@ func (s *NotificationService) Create(exec Executor, recipientUserID, actorUserID
 	return err
 }
 
-// List returns a user's notifications, newest first, paginated.
+// List returns a user's notifications, newest first, paginated. Each row
+// includes the actor's username/avatar and (when the post still exists)
+// its path, so the frontend can render and link the notification without a
+// second round trip.
 func (s *NotificationService) List(userID, limit, offset int) (*models.NotificationsResponse, error) {
 	rows, err := s.db.Query(
-		`SELECT id, recipient_user_id, actor_user_id, type, post_id, comment_id, read_at, created_at
-		 FROM notifications
-		 WHERE recipient_user_id = ?
-		 ORDER BY created_at DESC, id DESC
+		`SELECT n.id, n.recipient_user_id, n.actor_user_id, n.type, n.post_id, n.comment_id, n.read_at, n.created_at,
+		        u.username, u.avatar_url, p.path_identifier
+		 FROM notifications n
+		 JOIN users u ON u.id = n.actor_user_id
+		 LEFT JOIN posts p ON p.id = n.post_id
+		 WHERE n.recipient_user_id = ?
+		 ORDER BY n.created_at DESC, n.id DESC
 		 LIMIT ? OFFSET ?`,
 		userID, limit, offset,
 	)
@@ -57,7 +63,11 @@ func (s *NotificationService) List(userID, limit, offset int) (*models.Notificat
 		var n models.Notification
 		var postID, commentID sql.NullInt64
 		var readAt sql.NullTime
-		if err := rows.Scan(&n.ID, &n.RecipientUserID, &n.ActorUserID, &n.Type, &postID, &commentID, &readAt, &n.CreatedAt); err != nil {
+		var actorUsername, actorAvatarURL, postPath sql.NullString
+		if err := rows.Scan(
+			&n.ID, &n.RecipientUserID, &n.ActorUserID, &n.Type, &postID, &commentID, &readAt, &n.CreatedAt,
+			&actorUsername, &actorAvatarURL, &postPath,
+		); err != nil {
 			return nil, err
 		}
 		if postID.Valid {
@@ -70,6 +80,15 @@ func (s *NotificationService) List(userID, limit, offset int) (*models.Notificat
 		}
 		if readAt.Valid {
 			n.ReadAt = &readAt.Time
+		}
+		if actorUsername.Valid {
+			n.ActorUsername = actorUsername.String
+		}
+		if actorAvatarURL.Valid {
+			n.ActorAvatarURL = &actorAvatarURL.String
+		}
+		if postPath.Valid {
+			n.PostPath = &postPath.String
 		}
 		notifications = append(notifications, n)
 	}
