@@ -29,6 +29,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
 			email            TEXT UNIQUE NOT NULL,
 			username         TEXT,
+			avatar_url       TEXT,
 			auth_provider    TEXT NOT NULL,
 			provider_user_id TEXT NOT NULL,
 			created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -42,6 +43,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 			comment_id        INTEGER,
 			read_at           TIMESTAMP,
 			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE posts (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			path_identifier TEXT UNIQUE NOT NULL
 		);
 	`)
 	if err != nil {
@@ -57,6 +62,16 @@ func insertTestUser(t *testing.T, db *sql.DB, email string) int {
 		"INSERT INTO users (email, username, auth_provider, provider_user_id) VALUES (?, ?, 'google', ?)",
 		email, email, email,
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	return int(id)
+}
+
+func insertTestPost(t *testing.T, db *sql.DB, path string) int {
+	t.Helper()
+	result, err := db.Exec("INSERT INTO posts (path_identifier) VALUES (?)", path)
 	if err != nil {
 		t.Fatal(err)
 	}
