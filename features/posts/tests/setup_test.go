@@ -7,6 +7,7 @@ import (
 
 	authmw "arkana/features/auth/middlewares"
 	authsvc "arkana/features/auth/services"
+	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/handlers"
 	"arkana/features/posts/services"
 
@@ -43,6 +44,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			path_identifier TEXT UNIQUE NOT NULL,
 			like_count INTEGER NOT NULL DEFAULT 0,
+			writer_id INTEGER,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
@@ -74,6 +76,21 @@ func setupTestDB(t *testing.T) *sql.DB {
 			FOREIGN KEY (parent_id) REFERENCES comments(id)
 		);
 		CREATE INDEX idx_comments_post ON comments(post_id);
+		CREATE TABLE writers (
+			id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			name    TEXT NOT NULL,
+			user_id INTEGER
+		);
+		CREATE TABLE notifications (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			recipient_user_id INTEGER NOT NULL,
+			actor_user_id     INTEGER NOT NULL,
+			type              TEXT NOT NULL,
+			post_id           INTEGER,
+			comment_id        INTEGER,
+			read_at           TIMESTAMP,
+			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +124,36 @@ func insertTestPost(t *testing.T, db *sql.DB, path string) int {
 	return int(id)
 }
 
+func insertTestWriter(t *testing.T, db *sql.DB, name string, userID *int) int {
+	t.Helper()
+	result, err := db.Exec("INSERT INTO writers (name, user_id) VALUES (?, ?)", name, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	return int(id)
+}
+
+func setPostWriter(t *testing.T, db *sql.DB, postID, writerID int) {
+	t.Helper()
+	if _, err := db.Exec("UPDATE posts SET writer_id = ? WHERE id = ?", writerID, postID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countNotifications(t *testing.T, db *sql.DB, recipientUserID int, notifType string) int {
+	t.Helper()
+	var count int
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM notifications WHERE recipient_user_id = ? AND type = ?",
+		recipientUserID, notifType,
+	).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func generateTestJWT(t *testing.T, userID int, email string) string {
 	t.Helper()
 	token, err := authsvc.GenerateAccessToken(userID, email, testJWTSecret, time.Hour)
@@ -120,8 +167,9 @@ func setupRouter(t *testing.T, db *sql.DB) *mux.Router {
 	t.Helper()
 	router := mux.NewRouter()
 	auth := authmw.NewAuthMiddleware(testJWTSecret)
-	ps := services.NewPostService(db)
-	cs := services.NewCommentService(db)
+	notifSvc := notifservices.NewNotificationService(db)
+	ps := services.NewPostService(db, notifSvc)
+	cs := services.NewCommentService(db, notifSvc)
 	handlers.RegisterRoutes(router, ps, cs, auth)
 	return router
 }
