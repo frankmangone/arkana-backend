@@ -3,6 +3,7 @@ package router
 import (
 	"arkana/config"
 	"arkana/features/auth"
+	"arkana/features/notifications"
 	"arkana/features/posts"
 	"arkana/features/search"
 	"database/sql"
@@ -20,6 +21,7 @@ func Setup(db *sql.DB, cfg *config.Config) *mux.Router {
 
 	posts.Initialize(router, db, authMiddleware)
 	search.Initialize(router, db, cfg)
+	notifications.Initialize(router, db, authMiddleware)
 
 	return router
 }

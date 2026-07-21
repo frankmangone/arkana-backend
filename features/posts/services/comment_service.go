@@ -1,6 +1,8 @@
 package services
 
 import (
+	notifmodels "arkana/features/notifications/models"
+	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/models"
 	"database/sql"
 	"errors"
@@ -13,24 +15,35 @@ const MaxCommentLength = 1000
 var ErrCommentTooLong = errors.New("comment exceeds maximum length")
 
 type CommentService struct {
-	db *sql.DB
+	db            *sql.DB
+	notifications *notifservices.NotificationService
 }
 
-func NewCommentService(db *sql.DB) *CommentService {
-	return &CommentService{db: db}
+func NewCommentService(db *sql.DB, notifications *notifservices.NotificationService) *CommentService {
+	return &CommentService{db: db, notifications: notifications}
 }
 
-// Create adds a new comment to a post.
+// Create adds a new comment to a post. In the same transaction, it notifies
+// the parent comment's author (on a reply) and the post's writer (on any
+// comment) — see docs/superpowers/specs/2026-07-20-notifications-design.md
+// for the suppression rules.
 func (s *CommentService) Create(postID, userID int, body string, parentID *int) (*models.Comment, error) {
 	if len(body) > MaxCommentLength {
 		return nil, ErrCommentTooLong
 	}
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	replyRecipient := 0
 	if parentID != nil {
-		var parentPostID int
-		err := s.db.QueryRow(
-			"SELECT post_id FROM comments WHERE id = ?", *parentID,
-		).Scan(&parentPostID)
+		var parentPostID, parentUserID int
+		err := tx.QueryRow(
+			"SELECT post_id, user_id FROM comments WHERE id = ?", *parentID,
+		).Scan(&parentPostID, &parentUserID)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("parent comment not found")
 		}
@@ -40,9 +53,10 @@ func (s *CommentService) Create(postID, userID int, body string, parentID *int) 
 		if parentPostID != postID {
 			return nil, fmt.Errorf("parent comment belongs to a different post")
 		}
+		replyRecipient = parentUserID
 	}
 
-	result, err := s.db.Exec(
+	result, err := tx.Exec(
 		"INSERT INTO comments (post_id, user_id, parent_id, body) VALUES (?, ?, ?, ?)",
 		postID, userID, parentID, body,
 	)
@@ -56,11 +70,38 @@ func (s *CommentService) Create(postID, userID int, body string, parentID *int) 
 	}
 
 	var c models.Comment
-	err = s.db.QueryRow(
+	err = tx.QueryRow(
 		"SELECT id, post_id, user_id, parent_id, body, created_at FROM comments WHERE id = ?",
 		id,
 	).Scan(&c.ID, &c.PostID, &c.UserID, &c.ParentID, &c.Body, &c.CreatedAt)
 	if err != nil {
+		return nil, err
+	}
+
+	if replyRecipient != 0 {
+		if err := s.notifications.Create(tx, replyRecipient, userID, notifmodels.TypeCommentReply, &postID, &c.ID); err != nil {
+			return nil, err
+		}
+	}
+
+	var writerUserID sql.NullInt64
+	err = tx.QueryRow(
+		"SELECT w.user_id FROM posts p JOIN writers w ON w.id = p.writer_id WHERE p.id = ?",
+		postID,
+	).Scan(&writerUserID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err == nil && writerUserID.Valid {
+		writer := int(writerUserID.Int64)
+		if writer != replyRecipient {
+			if err := s.notifications.Create(tx, writer, userID, notifmodels.TypePostCommented, &postID, &c.ID); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 

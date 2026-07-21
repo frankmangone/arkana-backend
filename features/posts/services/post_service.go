@@ -1,6 +1,8 @@
 package services
 
 import (
+	notifmodels "arkana/features/notifications/models"
+	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/models"
 	"database/sql"
 	"errors"
@@ -9,11 +11,12 @@ import (
 )
 
 type PostService struct {
-	db *sql.DB
+	db            *sql.DB
+	notifications *notifservices.NotificationService
 }
 
-func NewPostService(db *sql.DB) *PostService {
-	return &PostService{db: db}
+func NewPostService(db *sql.DB, notifications *notifservices.NotificationService) *PostService {
+	return &PostService{db: db, notifications: notifications}
 }
 
 // GetByPath finds a post by path_identifier.
@@ -60,6 +63,8 @@ func (s *PostService) GetOrCreateByPath(path string) (*models.Post, error) {
 }
 
 // ToggleLike adds or removes a like for the given user on the given post.
+// On the unlike→like transition only, it notifies the post's writer (if
+// set) as part of the same transaction.
 func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -86,6 +91,20 @@ func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int,
 			return false, 0, err
 		}
 		liked = true
+
+		var writerUserID sql.NullInt64
+		err = tx.QueryRow(
+			"SELECT w.user_id FROM posts p JOIN writers w ON w.id = p.writer_id WHERE p.id = ?",
+			postID,
+		).Scan(&writerUserID)
+		if err != nil && err != sql.ErrNoRows {
+			return false, 0, err
+		}
+		if err == nil && writerUserID.Valid {
+			if err := s.notifications.Create(tx, int(writerUserID.Int64), userID, notifmodels.TypePostLiked, &postID, nil); err != nil {
+				return false, 0, err
+			}
+		}
 	} else if err != nil {
 		return false, 0, err
 	} else {

@@ -1,13 +1,15 @@
 package tests
 
 import (
+	notifmodels "arkana/features/notifications/models"
+	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/services"
 	"testing"
 )
 
 func TestGetOrCreateByPath(t *testing.T) {
 	db := setupTestDB(t)
-	svc := services.NewPostService(db)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
 
 	t.Run("creates new post", func(t *testing.T) {
 		post, err := svc.GetOrCreateByPath("blog/hello-world")
@@ -36,7 +38,7 @@ func TestGetOrCreateByPath(t *testing.T) {
 
 func TestToggleLike(t *testing.T) {
 	db := setupTestDB(t)
-	svc := services.NewPostService(db)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
 	userID := insertTestUser(t, db, "toggler@example.com")
 	post, _ := svc.GetOrCreateByPath("test-post")
 
@@ -87,7 +89,7 @@ func TestToggleLike(t *testing.T) {
 
 func TestToggleRead(t *testing.T) {
 	db := setupTestDB(t)
-	svc := services.NewPostService(db)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
 	userID := insertTestUser(t, db, "reader@example.com")
 	post, _ := svc.GetOrCreateByPath("read-test-post")
 
@@ -129,7 +131,7 @@ func TestToggleRead(t *testing.T) {
 
 func TestGetReadStatuses(t *testing.T) {
 	db := setupTestDB(t)
-	svc := services.NewPostService(db)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
 	userID := insertTestUser(t, db, "batchreader@example.com")
 
 	post1, _ := svc.GetOrCreateByPath("batch-post-1")
@@ -178,7 +180,7 @@ func TestGetReadStatuses(t *testing.T) {
 
 func TestGetPostInfoReadField(t *testing.T) {
 	db := setupTestDB(t)
-	svc := services.NewPostService(db)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
 	userID := insertTestUser(t, db, "infosreader@example.com")
 	post, _ := svc.GetOrCreateByPath("info-read-post")
 
@@ -211,6 +213,79 @@ func TestGetPostInfoReadField(t *testing.T) {
 		}
 		if info.Read {
 			t.Error("read = true, want false for userID 0")
+		}
+	})
+}
+
+func TestToggleLikeNotifications(t *testing.T) {
+	db := setupTestDB(t)
+	notifSvc := notifservices.NewNotificationService(db)
+	svc := services.NewPostService(db, notifSvc)
+
+	t.Run("liking a post notifies the writer", func(t *testing.T) {
+		post, _ := svc.GetOrCreateByPath("like-notify-post")
+		writerUser := insertTestUser(t, db, "likewriter@example.com")
+		writerID := insertTestWriter(t, db, "Like Writer", &writerUser)
+		setPostWriter(t, db, post.ID, writerID)
+		liker := insertTestUser(t, db, "likeliker@example.com")
+
+		if _, _, err := svc.ToggleLike(post.ID, liker); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := countNotifications(t, db, writerUser, notifmodels.TypePostLiked); got != 1 {
+			t.Errorf("post_liked notifications = %d, want 1", got)
+		}
+	})
+
+	t.Run("unliking does not notify", func(t *testing.T) {
+		post, _ := svc.GetOrCreateByPath("unlike-notify-post")
+		writerUser := insertTestUser(t, db, "unlikewriter@example.com")
+		writerID := insertTestWriter(t, db, "Unlike Writer", &writerUser)
+		setPostWriter(t, db, post.ID, writerID)
+		liker := insertTestUser(t, db, "unlikeliker@example.com")
+
+		if _, _, err := svc.ToggleLike(post.ID, liker); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := svc.ToggleLike(post.ID, liker); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := countNotifications(t, db, writerUser, notifmodels.TypePostLiked); got != 1 {
+			t.Errorf("post_liked notifications after unlike = %d, want 1 (only the original like notifies)", got)
+		}
+	})
+
+	t.Run("liking your own post does not notify yourself", func(t *testing.T) {
+		post, _ := svc.GetOrCreateByPath("self-like-post")
+		writerUser := insertTestUser(t, db, "selfliker@example.com")
+		writerID := insertTestWriter(t, db, "Self Liker", &writerUser)
+		setPostWriter(t, db, post.ID, writerID)
+
+		if _, _, err := svc.ToggleLike(post.ID, writerUser); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := countNotifications(t, db, writerUser, notifmodels.TypePostLiked); got != 0 {
+			t.Errorf("post_liked notifications for self-like = %d, want 0", got)
+		}
+	})
+
+	t.Run("post with no writer produces no notification", func(t *testing.T) {
+		post, _ := svc.GetOrCreateByPath("like-no-writer-post")
+		liker := insertTestUser(t, db, "nowriterliker@example.com")
+
+		if _, _, err := svc.ToggleLike(post.ID, liker); err != nil {
+			t.Fatal(err)
+		}
+
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM notifications WHERE post_id = ?", post.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Errorf("notifications = %d, want 0", count)
 		}
 	})
 }
