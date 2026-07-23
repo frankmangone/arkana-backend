@@ -27,6 +27,7 @@ func RegisterRoutes(router *mux.Router, s *services.SubscriptionService, auth *m
 	router.Handle("/api/subscribe", http.HandlerFunc(h.Subscribe)).Methods("POST", "OPTIONS")
 	router.Handle("/api/subscribe/confirm", http.HandlerFunc(h.Confirm)).Methods("POST", "OPTIONS")
 	router.Handle("/api/subscriptions", auth.RequireAuth(http.HandlerFunc(h.AuthenticatedSubscribe))).Methods("POST", "OPTIONS")
+	router.Handle("/api/subscriptions", auth.RequireAuth(http.HandlerFunc(h.GetStatus))).Methods("GET", "OPTIONS")
 	router.Handle("/api/subscriptions", auth.RequireAuth(http.HandlerFunc(h.AuthenticatedUnsubscribe))).Methods("DELETE", "OPTIONS")
 	router.Handle("/api/subscriptions/unsubscribe", http.HandlerFunc(h.Unsubscribe)).Methods("POST", "OPTIONS")
 	router.Handle("/api/admin/subscriptions/broadcast", adminAuth.RequireHMAC(http.HandlerFunc(h.Broadcast))).Methods("POST", "OPTIONS")
@@ -87,6 +88,23 @@ func (h *SubscriptionHandler) AuthenticatedSubscribe(w http.ResponseWriter, r *h
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, models.SubscriptionStatusResponse{Subscribed: true})
+}
+
+// GetStatus handles GET /api/subscriptions.
+func (h *SubscriptionHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middlewares.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	subscribed, err := h.service.GetStatus(r.Context(), userID)
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to get subscription status")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, models.SubscriptionStatusResponse{Subscribed: subscribed})
 }
 
 // AuthenticatedUnsubscribe handles DELETE /api/subscriptions.

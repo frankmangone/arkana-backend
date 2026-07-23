@@ -185,6 +185,56 @@ func TestAuthenticatedUnsubscribeHandler(t *testing.T) {
 	})
 }
 
+func TestGetStatusHandler(t *testing.T) {
+	t.Run("returns subscribed true for a confirmed subscriber", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db, newFakeSender())
+		userID := insertTestUser(t, db, "getstatus@example.com")
+		token := generateTestJWT(t, userID, "getstatus@example.com")
+		postJSON(t, router, "POST", "/api/subscriptions", nil, map[string]string{"Authorization": "Bearer " + token})
+
+		rec := postJSON(t, router, "GET", "/api/subscriptions", nil, map[string]string{"Authorization": "Bearer " + token})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp models.SubscriptionStatusResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if !resp.Subscribed {
+			t.Error("subscribed = false, want true")
+		}
+	})
+
+	t.Run("returns subscribed false when never subscribed", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db, newFakeSender())
+		userID := insertTestUser(t, db, "getstatusnever@example.com")
+		token := generateTestJWT(t, userID, "getstatusnever@example.com")
+
+		rec := postJSON(t, router, "GET", "/api/subscriptions", nil, map[string]string{"Authorization": "Bearer " + token})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp models.SubscriptionStatusResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if resp.Subscribed {
+			t.Error("subscribed = true, want false")
+		}
+	})
+
+	t.Run("rejects an unauthenticated request", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db, newFakeSender())
+
+		rec := postJSON(t, router, "GET", "/api/subscriptions", nil, nil)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
+}
+
 func TestUnsubscribeHandler(t *testing.T) {
 	t.Run("unsubscribes with a valid token", func(t *testing.T) {
 		db := setupTestDB(t)
