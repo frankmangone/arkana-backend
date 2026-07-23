@@ -1,0 +1,15 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html>
+  <body style="margin:0;padding:32px 16px;background-color:#120e1b;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background-color:#1c1627;border-radius:8px;border:1px solid rgba(255,255,255,0.1);">
+      <tr>
+        <td style="padding:32px;">
+          <img src="{{logoDataURI}}" width="40" height="40" alt="Arkana" style="display:block;margin:0 auto 24px;" />
+          {{template "content" .}}
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+{{end}}
