@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"arkana/features/subscriptions/services"
@@ -512,6 +513,70 @@ func TestSubscriptionServiceBroadcast(t *testing.T) {
 		_, _, err := svc.Broadcast(ctx, 99999)
 		if err != services.ErrPostNotFound {
 			t.Errorf("err = %v, want ErrPostNotFound", err)
+		}
+	})
+}
+
+func TestSubscriptionServiceEmailBodiesUseTemplates(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("confirm email body includes the header logo and confirm link", func(t *testing.T) {
+		db := setupTestDB(t)
+		sender := newFakeSender()
+		svc := setupService(t, db, sender)
+
+		if err := svc.Subscribe(ctx, "templated@example.com"); err != nil {
+			t.Fatal(err)
+		}
+
+		msgs := sender.messages()
+		if len(msgs) != 1 {
+			t.Fatalf("len(sent) = %d, want 1", len(msgs))
+		}
+		body := msgs[0].HTMLBody
+		if !strings.Contains(body, `src="data:image/png;base64,`) {
+			t.Error("expected confirm email body to include the base64-embedded header logo image")
+		}
+		if !strings.Contains(body, testFrontendURL+"/subscribe/confirm?sid=") {
+			t.Error("expected confirm email body to include the confirm link")
+		}
+	})
+
+	t.Run("broadcast email body includes the post title, link, and unsubscribe link", func(t *testing.T) {
+		db := setupTestDB(t)
+		sender := newFakeSender()
+		svc := setupService(t, db, sender)
+		postID := insertTestPost(t, db, "cryptography-101/templating", "Templating 101", "post body")
+
+		if err := svc.Subscribe(ctx, "broadcastee@example.com"); err != nil {
+			t.Fatal(err)
+		}
+		id, _, _, _ := getSubscriberByEmail(t, db, "broadcastee@example.com")
+		token := services.GenerateSubscriptionToken(testTokenSecret, id, services.PurposeConfirm)
+		if err := svc.ConfirmSubscription(ctx, id, token); err != nil {
+			t.Fatal(err)
+		}
+
+		messagesBeforeBroadcast := len(sender.messages())
+		if _, _, err := svc.Broadcast(ctx, postID); err != nil {
+			t.Fatal(err)
+		}
+		msgs := sender.messages()
+		if len(msgs) != messagesBeforeBroadcast+1 {
+			t.Fatalf("len(sent) = %d, want %d", len(msgs), messagesBeforeBroadcast+1)
+		}
+		body := msgs[len(msgs)-1].HTMLBody
+		if !strings.Contains(body, "Templating 101") {
+			t.Error("expected broadcast email body to include the post title")
+		}
+		if !strings.Contains(body, testFrontendURL+"/cryptography-101/templating") {
+			t.Error("expected broadcast email body to include the post link")
+		}
+		if !strings.Contains(body, testFrontendURL+"/unsubscribe?sid=") {
+			t.Error("expected broadcast email body to include the unsubscribe link")
+		}
+		if !strings.Contains(body, `src="data:image/png;base64,`) {
+			t.Error("expected broadcast email body to include the base64-embedded header logo image")
 		}
 	})
 }
