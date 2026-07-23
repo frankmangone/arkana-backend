@@ -10,6 +10,8 @@ arkana
 
 # Docs
 !/docs/*
+!/docs/modules/
+!/docs/modules/**
 
 # DB Files
 *.db

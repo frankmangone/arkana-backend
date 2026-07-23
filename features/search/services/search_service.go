@@ -189,6 +189,28 @@ func (s *SearchService) SearchTags(lang, query string) (*models.TagSearchRespons
 	return &models.TagSearchResponse{Query: query, Tags: tags}, nil
 }
 
+// IndexPost adds or updates a single post document in its per-language
+// Meilisearch index ("posts_<lang>"). The document id mirrors the one built
+// by arkana-frontend's publish-content.js so re-publishing a post updates
+// the same document rather than creating a duplicate.
+func (s *SearchService) IndexPost(lang, path, title, description, content string, tags []string) error {
+	id := fmt.Sprintf("%s-%s", lang, strings.ReplaceAll(path, "/", "-"))
+	doc := map[string]any{
+		"id":          id,
+		"lang":        lang,
+		"path":        path,
+		"title":       title,
+		"description": description,
+		"tags":        tags,
+		"content":     content,
+	}
+
+	url := fmt.Sprintf("%s/indexes/posts_%s/documents", s.host, lang)
+
+	var out any
+	return s.postMeili(url, []any{doc}, &out)
+}
+
 // postMeili sends a JSON payload to a Meilisearch endpoint and decodes the
 // 200 response into out; any transport or non-200 failure is wrapped in
 // ErrSearchUnavailable where appropriate.
@@ -211,7 +233,7 @@ func (s *SearchService) postMeili(url string, payload any, out any) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("%w: status %d: %s", ErrSearchUnavailable, resp.StatusCode, string(respBody))
 	}
