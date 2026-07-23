@@ -116,6 +116,53 @@ curl -X POST https://<host>/api/admin/subscriptions/broadcast \
   -d "$body"
 ```
 
+## Email templates
+
+The confirm and broadcast email bodies are rendered from Go `html/template`
+templates rather than built as raw strings.
+
+- **Location:** `features/subscriptions/services/templates/`
+  - `layout.html` — shared wrapper (header logo, card, footer slot) used by both emails.
+  - `confirm.html` — content block for the subscription-confirmation email.
+  - `broadcast.html` — content block for the new-post notification email.
+  - `logo.png` — a copy of `arkana-frontend/public/logo.png`, embedded via `//go:embed` and inlined into the rendered HTML as a base64 `data:` URI (see `features/subscriptions/services/templates.go`), so the email never depends on an externally reachable image URL or on images being enabled in the recipient's client.
+- **Rendering code:** `features/subscriptions/services/templates.go` defines `RenderConfirm(ConfirmEmailData) (string, error)` and `RenderBroadcast(BroadcastEmailData) (string, error)`, called from `sendConfirmEmail` / `Broadcast` in `subscription_service.go`.
+- **Styling:** inline `style="..."` attributes only (no `<style>` block, no media queries) for compatibility with clients like Outlook that strip or ignore `<style>` blocks. Colors match the frontend's dark brand theme (`arkana-frontend/src/app/globals.css`, `.dark` block) — page background `#120e1b`, card background `#1c1627`, primary button `#6423e7`.
+
+### Previewing a template locally
+
+There's no CLI for this yet — the quickest way is a throwaway test that
+renders a template and writes it to a file you can open in a browser.
+From the `arkana-backend` directory:
+
+```bash
+cat > features/subscriptions/services/render_preview_scratch_test.go <<'EOF'
+package services
+
+import (
+	"os"
+	"testing"
+)
+
+func TestRenderPreviewScratch(t *testing.T) {
+	html, err := RenderBroadcast(BroadcastEmailData{
+		PostTitle:       "Hashing 101",
+		PostURL:         "https://arkana.xyz/cryptography-101/hashing",
+		UnsubscribeLink: "https://arkana.xyz/unsubscribe?sid=1&token=xyz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile("/tmp/broadcast_preview.html", []byte(html), 0644)
+}
+EOF
+go test ./features/subscriptions/services/... -run TestRenderPreviewScratch -v
+open /tmp/broadcast_preview.html   # or: xdg-open on Linux
+rm features/subscriptions/services/render_preview_scratch_test.go
+```
+
+Swap `RenderBroadcast`/`BroadcastEmailData` for `RenderConfirm`/`ConfirmEmailData{Link: "..."}` to preview the confirmation email instead. Delete the scratch test file when done — it's not meant to be committed.
+
 ## Token scheme
 
 Confirm and unsubscribe tokens are stateless HMAC, not stored in the DB:

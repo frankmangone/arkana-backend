@@ -202,10 +202,14 @@ func (s *SubscriptionService) Broadcast(ctx context.Context, postID int) (sent, 
 	for _, r := range recipients {
 		unsubToken := GenerateSubscriptionToken(s.tokenSecret, r.id, PurposeUnsubscribe)
 		unsubLink := fmt.Sprintf("%s/unsubscribe?sid=%d&token=%s", s.frontendURL, r.id, unsubToken)
-		body := fmt.Sprintf(
-			`<p>A new post is up: <a href="%s">%s</a></p><p><a href="%s">Unsubscribe</a></p>`,
-			postURL, postTitle, unsubLink,
-		)
+		body, renderErr := RenderBroadcast(BroadcastEmailData{
+			PostTitle:       postTitle,
+			PostURL:         postURL,
+			UnsubscribeLink: unsubLink,
+		})
+		if renderErr != nil {
+			return sent, failed, renderErr
+		}
 		if err := s.sender.Send(ctx, email.Message{To: r.email, Subject: subject, HTMLBody: body}); err != nil {
 			log.Printf("broadcast: failed to send to subscriber %d: %v", r.id, err)
 			failed++
@@ -220,9 +224,13 @@ func (s *SubscriptionService) Broadcast(ctx context.Context, postID int) (sent, 
 func (s *SubscriptionService) sendConfirmEmail(ctx context.Context, subscriberID int, to string) error {
 	token := GenerateSubscriptionToken(s.tokenSecret, subscriberID, PurposeConfirm)
 	link := fmt.Sprintf("%s/subscribe/confirm?sid=%d&token=%s", s.frontendURL, subscriberID, token)
+	body, err := RenderConfirm(ConfirmEmailData{Link: link})
+	if err != nil {
+		return err
+	}
 	return s.sender.Send(ctx, email.Message{
 		To:       to,
 		Subject:  "Confirm your subscription",
-		HTMLBody: fmt.Sprintf(`<p>Click <a href="%s">here</a> to confirm your subscription to Arkana.</p>`, link),
+		HTMLBody: body,
 	})
 }
