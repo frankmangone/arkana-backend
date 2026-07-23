@@ -50,3 +50,18 @@ type PostInfoResponse struct {
 	Liked     bool   `json:"liked"`
 	Read      bool   `json:"read"`
 }
+
+// PublishPostRequest is the body of POST /api/admin/posts. RawContent is
+// the whole markdown file as-is (YAML frontmatter + body) - the backend
+// parses frontmatter, stores the body, and strips markdown for search
+// indexing, so the calling CI workflow doesn't need any content-parsing
+// logic of its own.
+type PublishPostRequest struct {
+	Path       string `json:"path"`
+	Lang       string `json:"lang"`
+	RawContent string `json:"raw_content"`
+}
+
+type PublishPostResponse struct {
+	Published bool `json:"published"`
+}

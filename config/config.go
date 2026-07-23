@@ -13,7 +13,7 @@ type Config struct {
 	CORSAllowedOrigin string `env:"CORS_ALLOWED_ORIGIN"`
 
 	// JWT
-	JWTSecret       string        `validate:"required" env:"JWT_SECRET"`
+	JWTSecret        string        `validate:"required" env:"JWT_SECRET"`
 	JWTAccessExpiry  time.Duration `env:"JWT_ACCESS_EXPIRY"`
 	JWTRefreshExpiry time.Duration `env:"JWT_REFRESH_EXPIRY"`
 
@@ -25,6 +25,13 @@ type Config struct {
 	// Meilisearch
 	MeiliHost      string `env:"MEILI_HOST"`
 	MeiliMasterKey string `env:"MEILI_MASTER_KEY"`
+
+	// Email subscriptions
+	FrontendURL             string `env:"FRONTEND_URL"`
+	ResendAPIKey            string `env:"RESEND_API_KEY"`
+	ResendFromEmail         string `env:"RESEND_FROM_EMAIL"`
+	SubscriptionTokenSecret string `env:"SUBSCRIPTION_TOKEN_SECRET"`
+	AdminHMACSecret         string `env:"ADMIN_HMAC_SECRET"`
 }
 
 // Load loads configuration from environment variables
@@ -43,6 +50,12 @@ func Load() *Config {
 
 		MeiliHost:      getEnv("MEILI_HOST", "http://localhost:7700"),
 		MeiliMasterKey: getEnv("MEILI_MASTER_KEY", ""),
+
+		FrontendURL:             getEnv("FRONTEND_URL", "http://localhost:5173"),
+		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),
+		ResendFromEmail:         getEnv("RESEND_FROM_EMAIL", ""),
+		SubscriptionTokenSecret: getEnv("SUBSCRIPTION_TOKEN_SECRET", ""),
+		AdminHMACSecret:         getEnv("ADMIN_HMAC_SECRET", ""),
 	}
 }
 

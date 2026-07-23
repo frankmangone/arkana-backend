@@ -1,19 +1,25 @@
 package posts
 
 import (
+	"arkana/config"
 	"arkana/features/auth/middlewares"
 	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/handlers"
 	"arkana/features/posts/services"
+	searchservices "arkana/features/search/services"
+	"arkana/shared/adminauth"
 	"database/sql"
 
 	"github.com/gorilla/mux"
 )
 
-func Initialize(router *mux.Router, db *sql.DB, auth *middlewares.AuthMiddleware) {
+func Initialize(router *mux.Router, db *sql.DB, cfg *config.Config, auth *middlewares.AuthMiddleware, adminAuth *adminauth.AdminAuthMiddleware) {
 	notificationService := notifservices.NewNotificationService(db)
 	postService := services.NewPostService(db, notificationService)
 	commentService := services.NewCommentService(db, notificationService)
 
-	handlers.RegisterRoutes(router, postService, commentService, auth)
+	searchService := searchservices.NewSearchService(db, cfg.MeiliHost, cfg.MeiliMasterKey)
+	adminPostService := services.NewAdminPostService(db, postService, searchService)
+
+	handlers.RegisterRoutes(router, postService, commentService, adminPostService, auth, adminAuth)
 }

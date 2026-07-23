@@ -6,6 +6,8 @@ import (
 	"arkana/features/notifications"
 	"arkana/features/posts"
 	"arkana/features/search"
+	"arkana/features/subscriptions"
+	"arkana/shared/adminauth"
 	"database/sql"
 
 	"github.com/gorilla/mux"
@@ -18,10 +20,12 @@ func Setup(db *sql.DB, cfg *config.Config) *mux.Router {
 	router.Use(CORSMiddleware(cfg.CORSAllowedOrigin))
 
 	authMiddleware := auth.Initialize(router, db, cfg)
+	adminAuthMiddleware := adminauth.NewAdminAuthMiddleware(cfg.AdminHMACSecret)
 
-	posts.Initialize(router, db, authMiddleware)
+	posts.Initialize(router, db, cfg, authMiddleware, adminAuthMiddleware)
 	search.Initialize(router, db, cfg)
 	notifications.Initialize(router, db, authMiddleware)
+	subscriptions.Initialize(router, db, cfg, authMiddleware, adminAuthMiddleware)
 
 	return router
 }

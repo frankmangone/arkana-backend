@@ -10,6 +10,7 @@ import (
 	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/handlers"
 	"arkana/features/posts/services"
+	"arkana/shared/adminauth"
 
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
@@ -80,6 +81,19 @@ func setupTestDB(t *testing.T) *sql.DB {
 			id      INTEGER PRIMARY KEY AUTOINCREMENT,
 			name    TEXT NOT NULL,
 			user_id INTEGER
+		);
+		CREATE TABLE post_contents (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			post_id    INTEGER NOT NULL,
+			lang       TEXT NOT NULL,
+			path       TEXT NOT NULL,
+			content    TEXT NOT NULL,
+			title      TEXT,
+			thumbnail  TEXT,
+			visible    INTEGER NOT NULL DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (lang, path)
 		);
 		CREATE TABLE notifications (
 			id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,13 +177,17 @@ func generateTestJWT(t *testing.T, userID int, email string) string {
 	return token
 }
 
+const testAdminSecret = "test-admin-secret"
+
 func setupRouter(t *testing.T, db *sql.DB) *mux.Router {
 	t.Helper()
 	router := mux.NewRouter()
 	auth := authmw.NewAuthMiddleware(testJWTSecret)
+	adminAuth := adminauth.NewAdminAuthMiddleware(testAdminSecret)
 	notifSvc := notifservices.NewNotificationService(db)
 	ps := services.NewPostService(db, notifSvc)
 	cs := services.NewCommentService(db, notifSvc)
-	handlers.RegisterRoutes(router, ps, cs, auth)
+	adminSvc := services.NewAdminPostService(db, ps, &fakeIndexer{})
+	handlers.RegisterRoutes(router, ps, cs, adminSvc, auth, adminAuth)
 	return router
 }
