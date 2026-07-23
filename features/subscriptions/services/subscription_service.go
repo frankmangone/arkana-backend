@@ -132,6 +132,22 @@ func (s *SubscriptionService) UnsubscribeByToken(ctx context.Context, subscriber
 	return err
 }
 
+// GetStatus reports whether userID has a confirmed subscription.
+func (s *SubscriptionService) GetStatus(ctx context.Context, userID int) (bool, error) {
+	var exists int
+	err := s.db.QueryRow(
+		"SELECT 1 FROM subscribers WHERE user_id = ? AND status = ? LIMIT 1",
+		userID, models.StatusConfirmed,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Broadcast sends a new-post notification to every confirmed subscriber.
 // A failure sending to one recipient is logged and does not abort the
 // batch; the returned counts reflect the real outcome.

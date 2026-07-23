@@ -361,6 +361,78 @@ func TestSubscriptionServiceUnsubscribeByToken(t *testing.T) {
 	})
 }
 
+func TestSubscriptionServiceGetStatus(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns true for a confirmed subscriber", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := setupService(t, db, newFakeSender())
+		userID := insertTestUser(t, db, "statusconfirmed@example.com")
+		if err := svc.AuthenticatedSubscribe(ctx, userID, "statusconfirmed@example.com"); err != nil {
+			t.Fatal(err)
+		}
+
+		subscribed, err := svc.GetStatus(ctx, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !subscribed {
+			t.Error("subscribed = false, want true")
+		}
+	})
+
+	t.Run("returns false when never subscribed", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := setupService(t, db, newFakeSender())
+		userID := insertTestUser(t, db, "statusnever@example.com")
+
+		subscribed, err := svc.GetStatus(ctx, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subscribed {
+			t.Error("subscribed = true, want false")
+		}
+	})
+
+	t.Run("returns false after unsubscribing", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := setupService(t, db, newFakeSender())
+		userID := insertTestUser(t, db, "statusunsubbed@example.com")
+		if err := svc.AuthenticatedSubscribe(ctx, userID, "statusunsubbed@example.com"); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.AuthenticatedUnsubscribe(ctx, userID); err != nil {
+			t.Fatal(err)
+		}
+
+		subscribed, err := svc.GetStatus(ctx, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subscribed {
+			t.Error("subscribed = true, want false")
+		}
+	})
+
+	t.Run("returns false for a pending guest row not yet linked to the user", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := setupService(t, db, newFakeSender())
+		userID := insertTestUser(t, db, "statuspending@example.com")
+		if err := svc.Subscribe(ctx, "statuspending@example.com"); err != nil {
+			t.Fatal(err)
+		}
+
+		subscribed, err := svc.GetStatus(ctx, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subscribed {
+			t.Error("subscribed = true, want false (still pending, not confirmed)")
+		}
+	})
+}
+
 func TestSubscriptionServiceBroadcast(t *testing.T) {
 	ctx := context.Background()
 
