@@ -35,10 +35,12 @@ func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer) *A
 	return &AdminPostService{db: db, posts: posts, indexer: indexer}
 }
 
-// Publish parses RawContent's frontmatter, upserts the posts/post_contents
-// rows for one (path, lang) with the body, and indexes a search-stripped
-// version into search. Re-publishing the same path/lang updates the
-// existing row rather than duplicating it.
+// Publish parses RawContent's frontmatter for title/thumbnail/description/tags,
+// upserts the posts/post_contents rows for one (path, lang) with the full
+// raw content (frontmatter included, since pull-content.js writes this
+// column's value out verbatim as the served .md file), and indexes a
+// search-stripped version of the body into search. Re-publishing the same
+// path/lang updates the existing row rather than duplicating it.
 func (s *AdminPostService) Publish(input PublishInput) error {
 	frontmatter, body, err := parseFrontmatter(input.RawContent)
 	if err != nil {
@@ -72,7 +74,7 @@ func (s *AdminPostService) Publish(input PublishInput) error {
 		   post_id = excluded.post_id, content = excluded.content,
 		   title = excluded.title, thumbnail = excluded.thumbnail,
 		   visible = excluded.visible, updated_at = CURRENT_TIMESTAMP`,
-		post.ID, input.Lang, contentPath, body, titleCol, thumbnailCol,
+		post.ID, input.Lang, contentPath, input.RawContent, titleCol, thumbnailCol,
 	)
 	if err != nil {
 		return err
