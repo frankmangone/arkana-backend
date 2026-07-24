@@ -45,7 +45,7 @@ func getPostContent(t *testing.T, db *sql.DB, lang, path string) (title, thumbna
 }
 
 func TestAdminPostServicePublish(t *testing.T) {
-	t.Run("parses frontmatter, stores the body, and indexes the stripped content", func(t *testing.T) {
+	t.Run("parses frontmatter, stores the full raw content, and indexes the stripped body", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
 		indexer := &fakeIndexer{}
@@ -78,8 +78,8 @@ func TestAdminPostServicePublish(t *testing.T) {
 		if thumbnail.String != "https://example.com/thumb.png" {
 			t.Errorf("thumbnail = %q, want the given thumbnail", thumbnail.String)
 		}
-		if content.String != "# Hashing\n\nSome **bold** body content.\n" {
-			t.Errorf("content = %q, want the raw body (frontmatter stripped)", content.String)
+		if content.String != raw {
+			t.Errorf("content = %q, want the full raw content (frontmatter preserved)", content.String)
 		}
 
 		if len(indexer.calls) != 1 {
@@ -151,8 +151,8 @@ func TestAdminPostServicePublish(t *testing.T) {
 		}
 
 		title, _, content, _ := getPostContent(t, db, "en", "cryptography-101/republish.md")
-		if title.String != "V2" || content.String != "v2 content\n" {
-			t.Errorf("title/content = %q/%q, want V2/\"v2 content\\n\" (updated)", title.String, content.String)
+		if title.String != "V2" || content.String != v2 {
+			t.Errorf("title/content = %q/%q, want V2/%q (updated, frontmatter preserved)", title.String, content.String, v2)
 		}
 	})
 
