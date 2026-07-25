@@ -29,6 +29,18 @@ func (f *fakeIndexer) IndexPost(lang, path, title, description, content string, 
 	return nil
 }
 
+// fakeTagChecker reports a slug as missing only if it's explicitly listed
+// in missing, so existing Publish tests that don't exercise tag
+// validation don't need to change - every tag they use is treated as
+// already registered by default (missing is nil).
+type fakeTagChecker struct {
+	missing []string
+}
+
+func (f *fakeTagChecker) MissingTags(slugs []string) ([]string, error) {
+	return f.missing, nil
+}
+
 func getPostContent(t *testing.T, db *sql.DB, lang, path string) (title, thumbnail, content sql.NullString, found bool) {
 	t.Helper()
 	err := db.QueryRow(
@@ -49,7 +61,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
 		indexer := &fakeIndexer{}
-		adminSvc := services.NewAdminPostService(db, postSvc, indexer)
+		adminSvc := services.NewAdminPostService(db, postSvc, indexer, &fakeTagChecker{})
 
 		raw := "---\n" +
 			"title: Hashing 101\n" +
@@ -103,7 +115,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 	t.Run("handles content with no frontmatter", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/no-frontmatter",
@@ -126,7 +138,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 	t.Run("re-publishing the same path/lang updates the existing row instead of duplicating", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
 
 		v1 := "---\ntitle: V1\n---\nv1 content\n"
 		v2 := "---\ntitle: V2\n---\nv2 content\n"
@@ -159,7 +171,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 	t.Run("reuses the same posts row across languages", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
 
 		en := services.PublishInput{Path: "cryptography-101/multilang", Lang: "en", RawContent: "---\ntitle: EN\n---\nen content\n"}
 		es := services.PublishInput{Path: "cryptography-101/multilang", Lang: "es", RawContent: "---\ntitle: ES\n---\nes content\n"}
@@ -183,7 +195,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
 		indexer := &fakeIndexer{failErr: errors.New("meilisearch down")}
-		adminSvc := services.NewAdminPostService(db, postSvc, indexer)
+		adminSvc := services.NewAdminPostService(db, postSvc, indexer, &fakeTagChecker{})
 
 		err := adminSvc.Publish(services.PublishInput{Path: "cryptography-101/fails", Lang: "en", RawContent: "---\ntitle: T\n---\nC\n"})
 		if err == nil {
@@ -194,7 +206,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 	t.Run("propagates a frontmatter parse failure", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/bad-frontmatter",
@@ -203,6 +215,63 @@ func TestAdminPostServicePublish(t *testing.T) {
 		})
 		if err == nil {
 			t.Fatal("expected an error for malformed frontmatter")
+		}
+	})
+}
+
+func TestAdminPostServicePublishTagValidation(t *testing.T) {
+	t.Run("rejects publishing when a frontmatter tag is unregistered", func(t *testing.T) {
+		db := setupTestDB(t)
+		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		tagChecker := &fakeTagChecker{missing: []string{"nonexistentTag"}}
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, tagChecker)
+
+		err := adminSvc.Publish(services.PublishInput{
+			Path:       "cryptography-101/bad-tag",
+			Lang:       "en",
+			RawContent: "---\ntitle: T\ntags:\n  - nonexistentTag\n---\nbody\n",
+		})
+		if err == nil {
+			t.Fatal("expected an error for an unregistered tag")
+		}
+		if !errors.Is(err, services.ErrUnknownTags) {
+			t.Errorf("err = %v, want ErrUnknownTags", err)
+		}
+
+		var count int
+		db.QueryRow("SELECT COUNT(*) FROM post_contents WHERE path = 'cryptography-101/bad-tag.md'").Scan(&count)
+		if count != 0 {
+			t.Errorf("post_contents row count = %d, want 0 (nothing written on validation failure)", count)
+		}
+	})
+
+	t.Run("publishing with no tags in frontmatter succeeds without querying tag existence", func(t *testing.T) {
+		db := setupTestDB(t)
+		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{missing: []string{"anything"}})
+
+		err := adminSvc.Publish(services.PublishInput{
+			Path:       "cryptography-101/no-tags",
+			Lang:       "en",
+			RawContent: "---\ntitle: T\n---\nbody\n",
+		})
+		if err != nil {
+			t.Fatalf("expected success (no tags to validate), got: %v", err)
+		}
+	})
+
+	t.Run("publishing with all tags registered succeeds", func(t *testing.T) {
+		db := setupTestDB(t)
+		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
+
+		err := adminSvc.Publish(services.PublishInput{
+			Path:       "cryptography-101/good-tags",
+			Lang:       "en",
+			RawContent: "---\ntitle: T\ntags:\n  - cryptography\n  - hashing\n---\nbody\n",
+		})
+		if err != nil {
+			t.Fatalf("expected success, got: %v", err)
 		}
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"arkana/features/posts/services"
 	"arkana/shared/httputil"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 )
@@ -37,6 +38,10 @@ func (h *AdminPostHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		RawContent: req.RawContent,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrUnknownTags) {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to publish post")
 		return
 	}

@@ -196,13 +196,21 @@ const testAdminSecret = "test-admin-secret"
 
 func setupRouter(t *testing.T, db *sql.DB) *mux.Router {
 	t.Helper()
+	return setupRouterWithTagChecker(t, db, &fakeTagChecker{})
+}
+
+// setupRouterWithTagChecker lets a test configure specific missing tags at
+// the HTTP layer, without changing setupRouter's signature for the many
+// existing callers that don't care about tag validation.
+func setupRouterWithTagChecker(t *testing.T, db *sql.DB, tagChecker services.TagChecker) *mux.Router {
+	t.Helper()
 	router := mux.NewRouter()
 	auth := authmw.NewAuthMiddleware(testJWTSecret)
 	adminAuth := adminauth.NewAdminAuthMiddleware(testAdminSecret)
 	notifSvc := notifservices.NewNotificationService(db)
 	ps := services.NewPostService(db, notifSvc)
 	cs := services.NewCommentService(db, notifSvc)
-	adminSvc := services.NewAdminPostService(db, ps, &fakeIndexer{})
+	adminSvc := services.NewAdminPostService(db, ps, &fakeIndexer{}, tagChecker)
 	handlers.RegisterRoutes(router, ps, cs, adminSvc, auth, adminAuth)
 	return router
 }
