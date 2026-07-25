@@ -93,3 +93,44 @@ func TestPublishWriterHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestListAllWritersHandler(t *testing.T) {
+	t.Run("returns every writer, including hidden ones, with a valid HMAC signature", func(t *testing.T) {
+		db := setupTestDB(t)
+		insertTestWriter(t, db, "visible-writer", "Visible Writer", true)
+		insertTestWriter(t, db, "hidden-writer", "Hidden Writer", false)
+		router := setupRouter(t, db)
+
+		headers := signAdminRequest(testAdminSecret, []byte{})
+		req := httptest.NewRequest("GET", "/api/admin/writers", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp models.AdminWriterListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 2 {
+			t.Fatalf("len(data) = %d, want 2 (both visible and hidden)", len(resp.Data))
+		}
+	})
+
+	t.Run("rejects a request without a valid HMAC signature", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db)
+
+		req := httptest.NewRequest("GET", "/api/admin/writers", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+	})
+}

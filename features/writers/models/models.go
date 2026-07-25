@@ -57,3 +57,9 @@ type WriterSummary struct {
 type WriterListResponse struct {
 	Data []WriterSummary `json:"data"`
 }
+
+// AdminWriterListResponse wraps GET /api/admin/writers's list in a data key,
+// same rationale as WriterListResponse.
+type AdminWriterListResponse struct {
+	Data []WriterResponse `json:"data"`
+}

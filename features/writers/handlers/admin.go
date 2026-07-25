@@ -9,11 +9,12 @@ import (
 )
 
 type AdminWriterHandler struct {
-	service *services.AdminWriterService
+	service       *services.AdminWriterService
+	writerService *services.WriterService
 }
 
-func NewAdminWriterHandler(s *services.AdminWriterService) *AdminWriterHandler {
-	return &AdminWriterHandler{service: s}
+func NewAdminWriterHandler(s *services.AdminWriterService, writerSvc *services.WriterService) *AdminWriterHandler {
+	return &AdminWriterHandler{service: s, writerService: writerSvc}
 }
 
 // Publish handles POST /api/admin/writers.
@@ -31,4 +32,17 @@ func (h *AdminWriterHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, models.PublishWriterResponse{Published: true})
+}
+
+// ListAll handles GET /api/admin/writers, returning every writer regardless
+// of visibility - for the admin-authenticated CI/build pipeline, not public
+// consumption.
+func (h *AdminWriterHandler) ListAll(w http.ResponseWriter, r *http.Request) {
+	writers, err := h.writerService.ListAll()
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to list writers")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, models.AdminWriterListResponse{Data: writers})
 }

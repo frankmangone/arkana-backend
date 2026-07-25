@@ -136,3 +136,89 @@ func TestWriterServiceList(t *testing.T) {
 		}
 	})
 }
+
+func TestWriterServiceListAll(t *testing.T) {
+	t.Run("includes hidden writers, unlike List", func(t *testing.T) {
+		db := setupTestDB(t)
+		insertTestWriter(t, db, "zed-writer", "Zed Writer", true)
+		insertTestWriter(t, db, "anna-writer", "Anna Writer", true)
+		insertTestWriter(t, db, "hidden-writer", "Hidden Writer", false)
+		svc := services.NewWriterService(db)
+
+		writers, err := svc.ListAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(writers) != 3 {
+			t.Fatalf("len(writers) = %d, want 3", len(writers))
+		}
+		if writers[0].Slug != "anna-writer" || writers[1].Slug != "hidden-writer" || writers[2].Slug != "zed-writer" {
+			t.Errorf("order = [%s, %s, %s], want [anna-writer, hidden-writer, zed-writer]",
+				writers[0].Slug, writers[1].Slug, writers[2].Slug)
+		}
+	})
+
+	t.Run("excludes legacy writer rows that have no slug", func(t *testing.T) {
+		db := setupTestDB(t)
+		_, err := db.Exec(`INSERT INTO writers (name, user_id) VALUES (?, ?)`, "Legacy Writer", 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		insertTestWriter(t, db, "normal-writer", "Normal Writer", true)
+		svc := services.NewWriterService(db)
+
+		writers, err := svc.ListAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(writers) != 1 {
+			t.Fatalf("len(writers) = %d, want 1", len(writers))
+		}
+		if writers[0].Name != "Normal Writer" {
+			t.Errorf("writers[0].Name = %q, want Normal Writer", writers[0].Name)
+		}
+	})
+
+	t.Run("returns full profile fields, not just the summary", func(t *testing.T) {
+		db := setupTestDB(t)
+		insertTestWriter(t, db, "frank-mangone", "Frank Mangone", true)
+		svc := services.NewWriterService(db)
+
+		writers, err := svc.ListAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(writers) != 1 {
+			t.Fatalf("len(writers) = %d, want 1", len(writers))
+		}
+		writer := writers[0]
+		if writer.Organization == nil || writer.Organization.Name != "SpaceDev" {
+			t.Errorf("organization = %+v, want SpaceDev", writer.Organization)
+		}
+		if writer.Bio["en"] != "An English bio." {
+			t.Errorf("bio[en] = %q, want An English bio.", writer.Bio["en"])
+		}
+		if writer.Social == nil || writer.Social.Twitter != "https://x.com/example" {
+			t.Errorf("social = %+v, want twitter set", writer.Social)
+		}
+		if writer.WalletAddress != "0xWALLET" {
+			t.Errorf("wallet_address = %q, want 0xWALLET", writer.WalletAddress)
+		}
+	})
+
+	t.Run("returns an empty slice, not nil, when there are no writers", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewWriterService(db)
+
+		writers, err := svc.ListAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if writers == nil {
+			t.Error("writers = nil, want an empty (non-nil) slice")
+		}
+		if len(writers) != 0 {
+			t.Errorf("len(writers) = %d, want 0", len(writers))
+		}
+	})
+}

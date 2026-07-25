@@ -9,10 +9,11 @@ import (
 )
 
 func RegisterRoutes(router *mux.Router, adminSvc *services.AdminWriterService, writerSvc *services.WriterService, adminAuth *adminauth.AdminAuthMiddleware) {
-	adminHandler := NewAdminWriterHandler(adminSvc)
+	adminHandler := NewAdminWriterHandler(adminSvc, writerSvc)
 	publicHandler := NewPublicWriterHandler(writerSvc)
 
 	router.HandleFunc("/api/writers", publicHandler.ListWriters).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/writers/{slug}", publicHandler.GetWriter).Methods("GET", "OPTIONS")
 	router.Handle("/api/admin/writers", adminAuth.RequireHMAC(http.HandlerFunc(adminHandler.Publish))).Methods("POST", "OPTIONS")
+	router.Handle("/api/admin/writers", adminAuth.RequireHMAC(http.HandlerFunc(adminHandler.ListAll))).Methods("GET", "OPTIONS")
 }
