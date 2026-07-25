@@ -54,6 +54,29 @@ func TestWriterServiceGetBySlug(t *testing.T) {
 			t.Errorf("err = %v, want ErrWriterNotFound", err)
 		}
 	})
+
+	t.Run("returns empty strings for missing optional image fields instead of erroring", func(t *testing.T) {
+		db := setupTestDB(t)
+		_, err := db.Exec(
+			`INSERT INTO writers (slug, name, visible) VALUES (?, ?, 1)`,
+			"partial-writer", "Partial Writer",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := services.NewWriterService(db)
+
+		writer, err := svc.GetBySlug("partial-writer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if writer.ImageURL != "" {
+			t.Errorf("ImageURL = %q, want empty string", writer.ImageURL)
+		}
+		if writer.AvatarURL != "" {
+			t.Errorf("AvatarURL = %q, want empty string", writer.AvatarURL)
+		}
+	})
 }
 
 func TestWriterServiceList(t *testing.T) {
@@ -89,6 +112,27 @@ func TestWriterServiceList(t *testing.T) {
 		}
 		if len(writers) != 0 {
 			t.Errorf("len(writers) = %d, want 0", len(writers))
+		}
+	})
+
+	t.Run("excludes legacy writer rows that have no slug", func(t *testing.T) {
+		db := setupTestDB(t)
+		_, err := db.Exec(`INSERT INTO writers (name, user_id) VALUES (?, ?)`, "Legacy Writer", 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		insertTestWriter(t, db, "normal-writer", "Normal Writer", true)
+		svc := services.NewWriterService(db)
+
+		writers, err := svc.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(writers) != 1 {
+			t.Fatalf("len(writers) = %d, want 1", len(writers))
+		}
+		if writers[0].Name != "Normal Writer" {
+			t.Errorf("writers[0].Name = %q, want Normal Writer", writers[0].Name)
 		}
 	})
 }

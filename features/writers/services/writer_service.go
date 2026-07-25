@@ -24,7 +24,7 @@ func (s *WriterService) GetBySlug(slug string) (*models.WriterResponse, error) {
 	var organization, bio, social, walletAddress sql.NullString
 
 	err := s.db.QueryRow(
-		`SELECT slug, name, image_url, avatar_url, organization, bio, social, wallet_address
+		`SELECT slug, name, COALESCE(image_url, ''), COALESCE(avatar_url, ''), organization, bio, social, wallet_address
 		 FROM writers WHERE slug = ? AND visible = 1`,
 		slug,
 	).Scan(&resp.Slug, &resp.Name, &resp.ImageURL, &resp.AvatarURL, &organization, &bio, &social, &walletAddress)
@@ -62,7 +62,7 @@ func (s *WriterService) GetBySlug(slug string) (*models.WriterResponse, error) {
 // List returns minimal profile info for every visible writer, ordered by name.
 func (s *WriterService) List() ([]models.WriterSummary, error) {
 	rows, err := s.db.Query(
-		`SELECT slug, name, image_url, avatar_url FROM writers WHERE visible = 1 ORDER BY name`,
+		`SELECT slug, name, COALESCE(image_url, ''), COALESCE(avatar_url, '') FROM writers WHERE visible = 1 AND slug IS NOT NULL ORDER BY name`,
 	)
 	if err != nil {
 		return nil, err
