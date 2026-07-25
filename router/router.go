@@ -7,6 +7,7 @@ import (
 	"arkana/features/posts"
 	"arkana/features/search"
 	"arkana/features/subscriptions"
+	"arkana/features/tags"
 	"arkana/features/writers"
 	"arkana/shared/adminauth"
 	"database/sql"
@@ -27,6 +28,7 @@ func Setup(db *sql.DB, cfg *config.Config) *mux.Router {
 	search.Initialize(router, db, cfg)
 	notifications.Initialize(router, db, authMiddleware)
 	subscriptions.Initialize(router, db, cfg, authMiddleware, adminAuthMiddleware)
+	tags.Initialize(router, db, adminAuthMiddleware)
 	writers.Initialize(router, db, adminAuthMiddleware)
 
 	return router
