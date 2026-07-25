@@ -1,10 +1,10 @@
 package tests
 
 import (
-	"fmt"
 	notifmodels "arkana/features/notifications/models"
 	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/services"
+	"fmt"
 	"testing"
 )
 
@@ -388,6 +388,37 @@ func TestPostServiceListVisibleContentPage(t *testing.T) {
 		}
 		if len(items) != 0 || total != 0 {
 			t.Errorf("len(items)/total = %d/%d, want 0/0", len(items), total)
+		}
+	})
+
+	t.Run("returns rows with the same path but different languages as distinct items", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		postID := insertTestPost(t, db, "cryptography-101/multilang")
+
+		insertPostContent(t, db, postID, "en", "cryptography-101/multilang.md", "english content", true)
+		insertPostContent(t, db, postID, "es", "cryptography-101/multilang.md", "contenido en espanol", true)
+
+		items, total, err := svc.ListVisibleContentPage(10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 {
+			t.Fatalf("total = %d, want 2", total)
+		}
+		if len(items) != 2 {
+			t.Fatalf("len(items) = %d, want 2", len(items))
+		}
+
+		langs := make(map[string]bool, len(items))
+		for _, item := range items {
+			if item.Path != "cryptography-101/multilang.md" {
+				t.Errorf("path = %q, want cryptography-101/multilang.md", item.Path)
+			}
+			langs[item.Lang] = true
+		}
+		if !langs["en"] || !langs["es"] {
+			t.Errorf("langs = %v, want both en and es present", langs)
 		}
 	})
 }
