@@ -188,3 +188,27 @@ func TestListContentHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestPublishHandlerTagValidation(t *testing.T) {
+	t.Run("rejects a post referencing an unregistered tag", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouterWithTagChecker(t, db, &fakeTagChecker{missing: []string{"unknownTag"}})
+
+		body, _ := json.Marshal(models.PublishPostRequest{
+			Path:       "cryptography-101/handler-bad-tag",
+			Lang:       "en",
+			RawContent: "---\ntitle: T\ntags:\n  - unknownTag\n---\nbody\n",
+		})
+		headers := signAdminRequest(testAdminSecret, body)
+		req := httptest.NewRequest("POST", "/api/admin/posts", bytes.NewReader(body))
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+}

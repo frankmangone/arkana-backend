@@ -2,7 +2,9 @@ package services
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 // PostIndexer indexes a post into the search backend. Satisfied
@@ -11,6 +13,15 @@ import (
 type PostIndexer interface {
 	IndexPost(lang, path, title, description, content string, tags []string) error
 }
+
+// TagChecker validates that a set of tag slugs are all registered tags.
+// Satisfied structurally by *tags/services.TagService, without this
+// package depending on it directly.
+type TagChecker interface {
+	MissingTags(slugs []string) ([]string, error)
+}
+
+var ErrUnknownTags = errors.New("unknown tag(s)")
 
 // PublishInput is the raw content for one (post, language) pair, coming
 // straight from a CI publish workflow with no pre-processing - frontmatter
@@ -29,10 +40,11 @@ type AdminPostService struct {
 	db      *sql.DB
 	posts   *PostService
 	indexer PostIndexer
+	tags    TagChecker
 }
 
-func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer) *AdminPostService {
-	return &AdminPostService{db: db, posts: posts, indexer: indexer}
+func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer, tags TagChecker) *AdminPostService {
+	return &AdminPostService{db: db, posts: posts, indexer: indexer, tags: tags}
 }
 
 // Publish parses RawContent's frontmatter for title/thumbnail/description/tags,
@@ -51,6 +63,14 @@ func (s *AdminPostService) Publish(input PublishInput) error {
 	thumbnail := frontmatterString(frontmatter, "thumbnail")
 	description := frontmatterString(frontmatter, "description")
 	tags := frontmatterStringSlice(frontmatter, "tags")
+
+	if len(tags) > 0 {
+		if missing, err := s.tags.MissingTags(tags); err != nil {
+			return err
+		} else if len(missing) > 0 {
+			return fmt.Errorf("%w: %s", ErrUnknownTags, strings.Join(missing, ", "))
+		}
+	}
 
 	post, err := s.posts.GetOrCreateByPath(input.Path)
 	if err != nil {
