@@ -32,3 +32,28 @@ type Social struct {
 type PublishWriterResponse struct {
 	Published bool `json:"published"`
 }
+
+type WriterResponse struct {
+	Slug          string            `json:"slug"`
+	Name          string            `json:"name"`
+	ImageURL      string            `json:"image_url"`
+	AvatarURL     string            `json:"avatar_url"`
+	Organization  *Organization     `json:"organization,omitempty"`
+	Bio           map[string]string `json:"bio,omitempty"`
+	Social        *Social           `json:"social,omitempty"`
+	WalletAddress string            `json:"wallet_address,omitempty"`
+}
+
+type WriterSummary struct {
+	Slug      string `json:"slug"`
+	Name      string `json:"name"`
+	ImageURL  string `json:"image_url"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+// WriterListResponse wraps GET /api/writers's list in a data key so
+// pagination metadata (page, total, ...) can be added later without a
+// breaking shape change.
+type WriterListResponse struct {
+	Data []WriterSummary `json:"data"`
+}

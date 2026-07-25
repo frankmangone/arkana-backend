@@ -51,6 +51,23 @@ func setupRouter(t *testing.T, db *sql.DB) *mux.Router {
 	router := mux.NewRouter()
 	adminAuth := adminauth.NewAdminAuthMiddleware(testAdminSecret)
 	adminSvc := services.NewAdminWriterService(db)
-	handlers.RegisterRoutes(router, adminSvc, adminAuth)
+	writerSvc := services.NewWriterService(db)
+	handlers.RegisterRoutes(router, adminSvc, writerSvc, adminAuth)
 	return router
+}
+
+func insertTestWriter(t *testing.T, db *sql.DB, slug, name string, visible bool) {
+	t.Helper()
+	_, err := db.Exec(
+		`INSERT INTO writers (slug, name, image_url, avatar_url, visible, organization, bio, social, wallet_address)
+		 VALUES (?, ?, '/img.png', '/avatar.png', ?, ?, ?, ?, ?)`,
+		slug, name, visible,
+		`{"name":"SpaceDev","url":"https://spacedev.io"}`,
+		`{"en":"An English bio."}`,
+		`{"twitter":"https://x.com/example"}`,
+		"0xWALLET",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

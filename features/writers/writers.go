@@ -11,6 +11,7 @@ import (
 
 func Initialize(router *mux.Router, db *sql.DB, adminAuth *adminauth.AdminAuthMiddleware) {
 	adminService := services.NewAdminWriterService(db)
+	writerService := services.NewWriterService(db)
 
-	handlers.RegisterRoutes(router, adminService, adminAuth)
+	handlers.RegisterRoutes(router, adminService, writerService, adminAuth)
 }
