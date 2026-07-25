@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -91,6 +92,99 @@ func TestPublishHandler(t *testing.T) {
 
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+}
+
+func TestListContentHandler(t *testing.T) {
+	t.Run("returns visible post content with a valid HMAC signature", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db)
+
+		postID := insertTestPost(t, db, "cryptography-101/list-content")
+		insertPostContent(t, db, postID, "en", "cryptography-101/list-content.md", "---\ntitle: T\n---\nbody\n", true)
+		insertPostContent(t, db, postID, "en", "cryptography-101/hidden-content.md", "---\ntitle: H\n---\nbody\n", false)
+
+		headers := signAdminRequest(testAdminSecret, []byte{})
+		req := httptest.NewRequest("GET", "/api/admin/posts", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp models.AdminPostContentListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Total != 1 {
+			t.Fatalf("total = %d, want 1 (hidden row excluded)", resp.Total)
+		}
+		if len(resp.Data) != 1 || resp.Data[0].Path != "cryptography-101/list-content.md" {
+			t.Fatalf("data = %+v, want the one visible row", resp.Data)
+		}
+	})
+
+	t.Run("applies limit and offset query params", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db)
+		postID := insertTestPost(t, db, "cryptography-101/paged-handler")
+		for i := 0; i < 3; i++ {
+			path := fmt.Sprintf("cryptography-101/paged-handler-%d.md", i)
+			insertPostContent(t, db, postID, "en", path, "content", true)
+		}
+
+		headers := signAdminRequest(testAdminSecret, []byte{})
+		req := httptest.NewRequest("GET", "/api/admin/posts?limit=2&offset=1", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+		}
+		var resp models.AdminPostContentListResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		if resp.Total != 3 {
+			t.Errorf("total = %d, want 3", resp.Total)
+		}
+		if len(resp.Data) != 2 {
+			t.Errorf("len(data) = %d, want 2", len(resp.Data))
+		}
+	})
+
+	t.Run("rejects an invalid limit", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db)
+
+		headers := signAdminRequest(testAdminSecret, []byte{})
+		req := httptest.NewRequest("GET", "/api/admin/posts?limit=not-a-number", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("rejects a request without a valid HMAC signature", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupRouter(t, db)
+
+		req := httptest.NewRequest("GET", "/api/admin/posts", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
 		}
 	})
 }
