@@ -65,3 +65,21 @@ type PublishPostRequest struct {
 type PublishPostResponse struct {
 	Published bool `json:"published"`
 }
+
+// AdminPostContentItem is one page item for the admin/CI content pull -
+// just the fields the pull script writes to disk (lang, path, full raw
+// content with frontmatter). Title/thumbnail/description stay embedded in
+// Content's own frontmatter, not duplicated here.
+type AdminPostContentItem struct {
+	Lang    string `json:"lang"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// AdminPostContentListResponse wraps one page of AdminPostContentItem plus
+// the total visible count, so the calling pull script knows when to stop
+// paging.
+type AdminPostContentListResponse struct {
+	Data  []AdminPostContentItem `json:"data"`
+	Total int                    `json:"total"`
+}

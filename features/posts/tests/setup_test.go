@@ -155,6 +155,21 @@ func setPostWriter(t *testing.T, db *sql.DB, postID, writerID int) {
 	}
 }
 
+func insertPostContent(t *testing.T, db *sql.DB, postID int, lang, path, content string, visible bool) {
+	t.Helper()
+	v := 1
+	if !visible {
+		v = 0
+	}
+	_, err := db.Exec(
+		"INSERT INTO post_contents (post_id, lang, path, content, visible) VALUES (?, ?, ?, ?, ?)",
+		postID, lang, path, content, v,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func countNotifications(t *testing.T, db *sql.DB, recipientUserID int, notifType string) int {
 	t.Helper()
 	var count int

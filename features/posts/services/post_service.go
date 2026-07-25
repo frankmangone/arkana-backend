@@ -292,3 +292,35 @@ func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResp
 		Read:      read,
 	}, nil
 }
+
+// ListVisibleContentPage returns one page of visible post_contents rows
+// (ordered by id for stable pagination across pages) plus the total
+// visible count, for the admin-authenticated CI content pull. Unlike
+// Publish's per-post_id upserts, this reads across all posts and
+// languages at once.
+func (s *PostService) ListVisibleContentPage(limit, offset int) ([]models.AdminPostContentItem, int, error) {
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM post_contents WHERE visible = 1").Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := s.db.Query(
+		"SELECT lang, path, content FROM post_contents WHERE visible = 1 ORDER BY id ASC LIMIT ? OFFSET ?",
+		limit, offset,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := []models.AdminPostContentItem{}
+	for rows.Next() {
+		var item models.AdminPostContentItem
+		if err := rows.Scan(&item.Lang, &item.Path, &item.Content); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+
+	return items, total, rows.Err()
+}
