@@ -4,6 +4,7 @@ import (
 	notifmodels "arkana/features/notifications/models"
 	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/services"
+	"fmt"
 	"testing"
 )
 
@@ -286,6 +287,138 @@ func TestToggleLikeNotifications(t *testing.T) {
 		}
 		if count != 0 {
 			t.Errorf("notifications = %d, want 0", count)
+		}
+	})
+}
+
+func TestPostServiceListVisibleContentPage(t *testing.T) {
+	t.Run("returns only visible content, ordered by id", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		post, _ := svc.GetOrCreateByPath("cryptography-101/first")
+
+		insertPostContent(t, db, post.ID, "en", "cryptography-101/first.md", "---\ntitle: First\n---\nbody one\n", true)
+		insertPostContent(t, db, post.ID, "en", "cryptography-101/second.md", "---\ntitle: Second\n---\nbody two\n", true)
+		insertPostContent(t, db, post.ID, "en", "cryptography-101/hidden.md", "---\ntitle: Hidden\n---\nbody three\n", false)
+
+		items, total, err := svc.ListVisibleContentPage(10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 {
+			t.Fatalf("total = %d, want 2 (hidden row excluded)", total)
+		}
+		if len(items) != 2 {
+			t.Fatalf("len(items) = %d, want 2", len(items))
+		}
+		if items[0].Path != "cryptography-101/first.md" || items[1].Path != "cryptography-101/second.md" {
+			t.Errorf("order = [%s, %s], want [cryptography-101/first.md, cryptography-101/second.md]", items[0].Path, items[1].Path)
+		}
+	})
+
+	t.Run("returns the full raw content verbatim, including frontmatter", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		post, _ := svc.GetOrCreateByPath("cryptography-101/verbatim")
+		raw := "---\ntitle: Verbatim\n---\n# Heading\n\nSome body.\n"
+		insertPostContent(t, db, post.ID, "en", "cryptography-101/verbatim.md", raw, true)
+
+		items, _, err := svc.ListVisibleContentPage(10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 || items[0].Content != raw {
+			t.Errorf("content = %q, want the full raw content %q", items[0].Content, raw)
+		}
+		if items[0].Lang != "en" {
+			t.Errorf("lang = %q, want en", items[0].Lang)
+		}
+	})
+
+	t.Run("respects limit and offset for paging", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		post, _ := svc.GetOrCreateByPath("cryptography-101/paged")
+		for i := 0; i < 5; i++ {
+			path := fmt.Sprintf("cryptography-101/paged-%d.md", i)
+			insertPostContent(t, db, post.ID, "en", path, "content", true)
+		}
+
+		page1, total, err := svc.ListVisibleContentPage(2, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 5 {
+			t.Fatalf("total = %d, want 5", total)
+		}
+		if len(page1) != 2 {
+			t.Fatalf("len(page1) = %d, want 2", len(page1))
+		}
+
+		page2, _, err := svc.ListVisibleContentPage(2, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page2) != 2 {
+			t.Fatalf("len(page2) = %d, want 2", len(page2))
+		}
+		if page1[0].Path == page2[0].Path {
+			t.Error("page1 and page2 overlap, want distinct rows")
+		}
+
+		page3, _, err := svc.ListVisibleContentPage(2, 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page3) != 1 {
+			t.Errorf("len(page3) = %d, want 1 (last partial page)", len(page3))
+		}
+	})
+
+	t.Run("returns an empty slice, not nil, and total 0, when there is no content", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+
+		items, total, err := svc.ListVisibleContentPage(10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if items == nil {
+			t.Error("items = nil, want an empty (non-nil) slice")
+		}
+		if len(items) != 0 || total != 0 {
+			t.Errorf("len(items)/total = %d/%d, want 0/0", len(items), total)
+		}
+	})
+
+	t.Run("returns rows with the same path but different languages as distinct items", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		postID := insertTestPost(t, db, "cryptography-101/multilang")
+
+		insertPostContent(t, db, postID, "en", "cryptography-101/multilang.md", "english content", true)
+		insertPostContent(t, db, postID, "es", "cryptography-101/multilang.md", "contenido en espanol", true)
+
+		items, total, err := svc.ListVisibleContentPage(10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 {
+			t.Fatalf("total = %d, want 2", total)
+		}
+		if len(items) != 2 {
+			t.Fatalf("len(items) = %d, want 2", len(items))
+		}
+
+		langs := make(map[string]bool, len(items))
+		for _, item := range items {
+			if item.Path != "cryptography-101/multilang.md" {
+				t.Errorf("path = %q, want cryptography-101/multilang.md", item.Path)
+			}
+			langs[item.Lang] = true
+		}
+		if !langs["en"] || !langs["es"] {
+			t.Errorf("langs = %v, want both en and es present", langs)
 		}
 	})
 }
