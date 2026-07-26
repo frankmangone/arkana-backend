@@ -422,3 +422,43 @@ func TestPostServiceListVisibleContentPage(t *testing.T) {
 		}
 	})
 }
+
+func TestMissingPaths(t *testing.T) {
+	db := setupTestDB(t)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+
+	t.Run("returns nil for an empty input, without querying", func(t *testing.T) {
+		missing, err := svc.MissingPaths(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(missing) != 0 {
+			t.Errorf("missing = %v, want empty", missing)
+		}
+	})
+
+	t.Run("returns only the paths not present in posts", func(t *testing.T) {
+		insertTestPost(t, db, "blockchain-101/how-it-all-began")
+
+		missing, err := svc.MissingPaths([]string{"blockchain-101/how-it-all-began", "blockchain-101/nonexistent"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(missing) != 1 || missing[0] != "blockchain-101/nonexistent" {
+			t.Errorf("missing = %v, want [blockchain-101/nonexistent]", missing)
+		}
+	})
+
+	t.Run("returns empty when every path is registered", func(t *testing.T) {
+		insertTestPost(t, db, "cryptography-101/hashing")
+		insertTestPost(t, db, "cryptography-101/encryption")
+
+		missing, err := svc.MissingPaths([]string{"cryptography-101/hashing", "cryptography-101/encryption"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(missing) != 0 {
+			t.Errorf("missing = %v, want empty", missing)
+		}
+	})
+}
