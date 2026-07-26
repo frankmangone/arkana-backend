@@ -65,6 +65,33 @@ func (s *ReadingListService) Publish(p models.ReadingListPayload) error {
 		return err
 	}
 
+	// Delete translations for languages not present in the new payload
+	if len(p.Translations) == 0 {
+		// If no translations provided, delete all existing translations for this list
+		if _, err := tx.Exec(`DELETE FROM reading_list_translations WHERE reading_list_id = ?`, listID); err != nil {
+			return err
+		}
+	} else {
+		// Delete translations for languages not in the new payload
+		var langs []string
+		for lang := range p.Translations {
+			langs = append(langs, lang)
+		}
+		placeholders := strings.Repeat("?,", len(langs))
+		placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+		args := make([]interface{}, len(langs)+1)
+		args[0] = listID
+		for i, lang := range langs {
+			args[i+1] = lang
+		}
+		if _, err := tx.Exec(
+			fmt.Sprintf(`DELETE FROM reading_list_translations WHERE reading_list_id = ? AND lang NOT IN (%s)`, placeholders),
+			args...,
+		); err != nil {
+			return err
+		}
+	}
+
 	for lang, t := range p.Translations {
 		if _, err := tx.Exec(
 			`INSERT INTO reading_list_translations (reading_list_id, lang, title, description)
@@ -80,8 +107,8 @@ func (s *ReadingListService) Publish(p models.ReadingListPayload) error {
 	if err := deleteModuleTree(tx, listID); err != nil {
 		return err
 	}
-	for mi, m := range p.Modules {
-		moduleID, err := insertModule(tx, listID, m, mi)
+	for _, m := range p.Modules {
+		moduleID, err := insertModule(tx, listID, m, m.Order)
 		if err != nil {
 			return err
 		}
@@ -241,7 +268,6 @@ func (s *ReadingListService) loadModules() (map[int64]models.ModuleResponse, map
 
 	byID := map[int64]models.ModuleResponse{}
 	orderByList := map[int64][]int64{}
-	seen := map[int64]bool{}
 	for rows.Next() {
 		var id, listID int64
 		var slug string
@@ -258,10 +284,7 @@ func (s *ReadingListService) loadModules() (map[int64]models.ModuleResponse, map
 				Translations: map[string]models.Translation{},
 				Items:        []models.ItemResponse{},
 			}
-			if !seen[id] {
-				orderByList[listID] = append(orderByList[listID], id)
-				seen[id] = true
-			}
+			orderByList[listID] = append(orderByList[listID], id)
 		}
 		if lang.Valid {
 			entry.Translations[lang.String] = models.Translation{Title: title.String, Description: description.String}

@@ -163,6 +163,96 @@ func TestReadingListServicePublish(t *testing.T) {
 			t.Errorf("position = %d, want 5", position)
 		}
 	})
+
+	t.Run("module Order field is respected regardless of submission order", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := newReadingListService(db)
+
+		// Create a payload with modules NOT in Order sequence
+		unordered := models.ReadingListPayload{
+			Slug:       "test-order",
+			Translations: map[string]models.Translation{
+				"en": {Title: "Test Order", Description: "Test"},
+			},
+			Modules: []models.ModulePayload{
+				{
+					Slug:  "module-second",
+					Order: 2,
+					Translations: map[string]models.Translation{
+						"en": {Title: "Second Module", Description: "This is second"},
+					},
+					Items: []models.ItemPayload{},
+				},
+				{
+					Slug:  "module-first",
+					Order: 1,
+					Translations: map[string]models.Translation{
+						"en": {Title: "First Module", Description: "This is first"},
+					},
+					Items: []models.ItemPayload{},
+				},
+			},
+		}
+
+		if err := svc.Publish(unordered); err != nil {
+			t.Fatal(err)
+		}
+
+		// Fetch the modules and verify they are ordered by Order, not submission order
+		lists, err := svc.ListAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(lists) != 1 {
+			t.Fatalf("len(lists) = %d, want 1", len(lists))
+		}
+		if len(lists[0].Modules) != 2 {
+			t.Fatalf("len(modules) = %d, want 2", len(lists[0].Modules))
+		}
+		if lists[0].Modules[0].Slug != "module-first" {
+			t.Errorf("first module slug = %q, want module-first", lists[0].Modules[0].Slug)
+		}
+		if lists[0].Modules[1].Slug != "module-second" {
+			t.Errorf("second module slug = %q, want module-second", lists[0].Modules[1].Slug)
+		}
+	})
+
+	t.Run("re-publishing with a dropped language deletes stale translation rows", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := newReadingListService(db)
+
+		// Publish with en and es translations
+		payload := samplePayload()
+		if err := svc.Publish(payload); err != nil {
+			t.Fatal(err)
+		}
+
+		var translationCount int
+		db.QueryRow("SELECT COUNT(*) FROM reading_list_translations").Scan(&translationCount)
+		if translationCount != 2 {
+			t.Errorf("initial translation count = %d, want 2", translationCount)
+		}
+
+		// Re-publish with only en translation (drop es)
+		updated := samplePayload()
+		delete(updated.Translations, "es")
+		if err := svc.Publish(updated); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify es row is deleted
+		db.QueryRow("SELECT COUNT(*) FROM reading_list_translations WHERE lang = 'es'").Scan(&translationCount)
+		if translationCount != 0 {
+			t.Errorf("es translation count after republish = %d, want 0", translationCount)
+		}
+
+		// Verify en row still exists
+		var enCount int
+		db.QueryRow("SELECT COUNT(*) FROM reading_list_translations WHERE lang = 'en'").Scan(&enCount)
+		if enCount != 1 {
+			t.Errorf("en translation count after republish = %d, want 1", enCount)
+		}
+	})
 }
 
 func TestReadingListServiceListAll(t *testing.T) {
