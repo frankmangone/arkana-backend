@@ -62,6 +62,52 @@ func (s *PostService) GetOrCreateByPath(path string) (*models.Post, error) {
 	return s.getByID(int(id))
 }
 
+// MissingPaths returns the subset of paths that have no row in posts, for
+// publish-time validation by other features (e.g. reading lists). Returns
+// nil for an empty input without querying. Same IN (...) placeholder idiom
+// as GetReadStatuses/tags.TagService.MissingTags.
+func (s *PostService) MissingPaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(paths))
+	args := make([]interface{}, len(paths))
+	for i, p := range paths {
+		placeholders[i] = "?"
+		args[i] = p
+	}
+
+	rows, err := s.db.Query(
+		fmt.Sprintf("SELECT path_identifier FROM posts WHERE path_identifier IN (%s)", strings.Join(placeholders, ",")),
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	found := make(map[string]bool, len(paths))
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		found[path] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var missing []string
+	for _, p := range paths {
+		if !found[p] {
+			missing = append(missing, p)
+		}
+	}
+	return missing, nil
+}
+
 // ToggleLike adds or removes a like for the given user on the given post.
 // On the unlike→like transition only, it notifies the post's writer (if
 // set) as part of the same transaction.
