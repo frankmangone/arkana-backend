@@ -5,6 +5,7 @@ import (
 	"arkana/features/auth"
 	"arkana/features/notifications"
 	"arkana/features/posts"
+	"arkana/features/readinglists"
 	"arkana/features/search"
 	"arkana/features/subscriptions"
 	"arkana/features/tags"
@@ -25,6 +26,7 @@ func Setup(db *sql.DB, cfg *config.Config) *mux.Router {
 	adminAuthMiddleware := adminauth.NewAdminAuthMiddleware(cfg.AdminHMACSecret)
 
 	posts.Initialize(router, db, cfg, authMiddleware, adminAuthMiddleware)
+	readinglists.Initialize(router, db, adminAuthMiddleware)
 	search.Initialize(router, db, cfg)
 	notifications.Initialize(router, db, authMiddleware)
 	subscriptions.Initialize(router, db, cfg, authMiddleware, adminAuthMiddleware)
