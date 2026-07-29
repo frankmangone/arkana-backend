@@ -126,12 +126,15 @@ func (h *SessionHandler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteError(w, http.StatusConflict, "attempt already completed")
 		case errors.Is(err, services.ErrWrongQuestion):
 			httputil.WriteError(w, http.StatusConflict, err.Error())
-		case errors.Is(err, services.ErrUnknownQuestionType), errors.Is(err, services.ErrMalformedResponse):
-			// Bad-input/bad-data conditions - either the client's response
-			// shape doesn't match this question's type, or an admin
-			// published a question with a type grade() doesn't recognize -
-			// neither is a server fault.
+		case errors.Is(err, services.ErrUnknownQuestionType):
+			// An admin published a question with a type grade() doesn't
+			// recognize - a bad-data condition, not a server fault.
 			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, services.ErrMalformedResponse):
+			// The client's response shape doesn't match this question's
+			// type - a bad-input condition, not a server fault.
+			// Use a static message to avoid leaking internal JSON unmarshal errors.
+			httputil.WriteError(w, http.StatusBadRequest, "response does not match the question's expected shape")
 		default:
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to submit answer")
 		}
