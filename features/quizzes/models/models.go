@@ -29,3 +29,18 @@ type StartAttemptResponse struct {
 	AttemptID      string `json:"attemptId"`
 	TotalQuestions int    `json:"totalQuestions"`
 }
+
+type QuestionDTO struct {
+	UUID       string          `json:"uuid"`
+	Type       string          `json:"type"`
+	Difficulty int             `json:"difficulty"`
+	Prompt     string          `json:"prompt"`
+	Content    json.RawMessage `json:"content"`
+}
+
+type NextQuestionResponse struct {
+	Question       *QuestionDTO `json:"question"`
+	Position       int          `json:"position"`
+	TotalQuestions int          `json:"totalQuestions"`
+	Done           bool         `json:"done"`
+}

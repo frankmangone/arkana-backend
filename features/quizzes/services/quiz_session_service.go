@@ -14,6 +14,26 @@ const questionsPerAttempt = 8
 const passThreshold = 0.7
 
 var ErrModuleNotFound = errors.New("module not found")
+var ErrAttemptNotFound = errors.New("attempt not found")
+var ErrAttemptForbidden = errors.New("attempt belongs to another user")
+var ErrAttemptCompleted = errors.New("attempt already completed")
+
+// QuestionDelivery is the correctness-stripped shape served over
+// GET .../next - deliberately has no answer_key/correct-* field anywhere,
+// same rule the DB schema already enforces on questions.answer_key, now
+// also enforced explicitly on this read path.
+type QuestionDelivery struct {
+	UUID       string
+	Type       string
+	Difficulty int
+	Prompt     string
+	Content    json.RawMessage
+}
+
+type attemptRow struct {
+	ID          int
+	CompletedAt sql.NullTime
+}
 
 type QuizSessionService struct {
 	db *sql.DB
@@ -134,4 +154,97 @@ func (s *QuizSessionService) questionPool(moduleID int) ([]Question, error) {
 		pool = append(pool, q)
 	}
 	return pool, rows.Err()
+}
+
+// getOwnedAttempt loads a quiz_attempts row by its public uuid and
+// enforces that it belongs to userID - the actual guard against
+// cross-user access; the opaque uuid is defense-in-depth, never a
+// substitute for this check. Tasks 6-7 (Answer/Complete) call this same
+// helper.
+func (s *QuizSessionService) getOwnedAttempt(userID int, attemptUUID string) (*attemptRow, error) {
+	var row attemptRow
+	var ownerID int
+	err := s.db.QueryRow(
+		"SELECT id, user_id, completed_at FROM quiz_attempts WHERE uuid = ?",
+		attemptUUID,
+	).Scan(&row.ID, &ownerID, &row.CompletedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrAttemptNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if ownerID != userID {
+		return nil, ErrAttemptForbidden
+	}
+	return &row, nil
+}
+
+func (s *QuizSessionService) totalQuestions(attemptID int) (int, error) {
+	var total int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM quiz_attempt_questions WHERE attempt_id = ?", attemptID).Scan(&total)
+	return total, err
+}
+
+func (s *QuizSessionService) answeredCount(attemptID int) (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM quiz_attempt_answers WHERE attempt_id = ?", attemptID).Scan(&count)
+	return count, err
+}
+
+// Next returns the question at the attempt's current position (however
+// many answers exist so far), stripped of every correct-answer field.
+// Repeated calls without an intervening Answer() call return the
+// identical question every time - nothing here advances state, only a
+// graded or skipped answer does.
+func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (question *QuestionDelivery, position, total int, done bool, err error) {
+	attempt, err := s.getOwnedAttempt(userID, attemptUUID)
+	if err != nil {
+		return nil, 0, 0, false, err
+	}
+	if attempt.CompletedAt.Valid {
+		return nil, 0, 0, false, ErrAttemptCompleted
+	}
+
+	total, err = s.totalQuestions(attempt.ID)
+	if err != nil {
+		return nil, 0, 0, false, err
+	}
+	answered, err := s.answeredCount(attempt.ID)
+	if err != nil {
+		return nil, 0, 0, false, err
+	}
+	if answered >= total {
+		return nil, answered, total, true, nil
+	}
+
+	var questionID int
+	if err := s.db.QueryRow(
+		"SELECT question_id FROM quiz_attempt_questions WHERE attempt_id = ? AND position = ?",
+		attempt.ID, answered,
+	).Scan(&questionID); err != nil {
+		return nil, 0, 0, false, err
+	}
+
+	q, err := s.loadQuestionDelivery(questionID, lang)
+	if err != nil {
+		return nil, 0, 0, false, err
+	}
+	return q, answered, total, false, nil
+}
+
+func (s *QuizSessionService) loadQuestionDelivery(questionID int, lang string) (*QuestionDelivery, error) {
+	var q QuestionDelivery
+	var content string
+	err := s.db.QueryRow(`
+		SELECT q.uuid, q.type, q.difficulty, qt.prompt, qt.content
+		FROM questions q
+		JOIN question_translations qt ON qt.question_id = q.id
+		WHERE q.id = ? AND qt.lang = ?
+	`, questionID, lang).Scan(&q.UUID, &q.Type, &q.Difficulty, &q.Prompt, &content)
+	if err != nil {
+		return nil, err
+	}
+	q.Content = json.RawMessage(content)
+	return &q, nil
 }

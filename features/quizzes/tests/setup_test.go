@@ -249,3 +249,13 @@ func insertTestQuestion(t *testing.T, db *sql.DB, slug string, postID int) int {
 	}
 	return int(questionID)
 }
+
+func insertTestQuestionTranslation(t *testing.T, db *sql.DB, questionID int, lang, prompt, content string) {
+	t.Helper()
+	if _, err := db.Exec(
+		"INSERT INTO question_translations (question_id, lang, prompt, content) VALUES (?, ?, ?, ?)",
+		questionID, lang, prompt, content,
+	); err != nil {
+		t.Fatal(err)
+	}
+}

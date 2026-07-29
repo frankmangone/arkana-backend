@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"database/sql"
 	"testing"
 
 	"arkana/features/quizzes/services"
@@ -104,6 +105,145 @@ func TestQuizSessionServiceStart(t *testing.T) {
 		}
 		if total != 1 {
 			t.Fatalf("total = %d, want 1 (DISTINCT must dedupe a question linked to two posts in the same module)", total)
+		}
+	})
+}
+
+func TestQuizSessionServiceNext(t *testing.T) {
+	setup := func(t *testing.T) (db *sql.DB, svc *services.QuizSessionService, userID int, attemptUUID string) {
+		t.Helper()
+		db = setupTestDB(t)
+		userID = insertTestUser(t, db, "learner@example.com")
+		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+		q1 := insertTestQuestion(t, db, "q1", postID)
+		insertTestQuestionTranslation(t, db, q1, "en", "What is q1?", `{"options":[]}`)
+		q2 := insertTestQuestion(t, db, "q2", postID)
+		insertTestQuestionTranslation(t, db, q2, "en", "What is q2?", `{"options":[]}`)
+
+		svc = services.NewQuizSessionService(db)
+		attemptUUID, _, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return db, svc, userID, attemptUUID
+	}
+
+	t.Run("returns the question at position 0 before any answer", func(t *testing.T) {
+		_, svc, userID, attemptUUID := setup(t)
+
+		q, position, total, done, err := svc.Next(userID, attemptUUID, "en")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done || q == nil {
+			t.Fatalf("done = %v, q = %v, want a question and done=false", done, q)
+		}
+		if position != 0 || total != 2 {
+			t.Fatalf("position=%d total=%d, want 0 and 2", position, total)
+		}
+	})
+
+	t.Run("repeated calls without an intervening answer return the identical question", func(t *testing.T) {
+		_, svc, userID, attemptUUID := setup(t)
+
+		first, _, _, _, err := svc.Next(userID, attemptUUID, "en")
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, _, _, _, err := svc.Next(userID, attemptUUID, "en")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.UUID != second.UUID {
+			t.Fatalf("first.UUID = %q, second.UUID = %q, want identical", first.UUID, second.UUID)
+		}
+	})
+
+	t.Run("advances to the next position once an answer row exists", func(t *testing.T) {
+		db, svc, userID, attemptUUID := setup(t)
+		var attemptID int
+		if err := db.QueryRow("SELECT id FROM quiz_attempts WHERE uuid = ?", attemptUUID).Scan(&attemptID); err != nil {
+			t.Fatal(err)
+		}
+		var firstQuestionID int
+		if err := db.QueryRow("SELECT question_id FROM quiz_attempt_questions WHERE attempt_id = ? AND position = 0", attemptID).Scan(&firstQuestionID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(
+			"INSERT INTO quiz_attempt_answers (attempt_id, question_id, response, correct) VALUES (?, ?, '{}', 1)",
+			attemptID, firstQuestionID,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		_, position, _, done, err := svc.Next(userID, attemptUUID, "en")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done || position != 1 {
+			t.Fatalf("position=%d done=%v, want 1 and false", position, done)
+		}
+	})
+
+	t.Run("returns done=true once every position is answered", func(t *testing.T) {
+		db, svc, userID, attemptUUID := setup(t)
+		var attemptID int
+		db.QueryRow("SELECT id FROM quiz_attempts WHERE uuid = ?", attemptUUID).Scan(&attemptID)
+		rows, _ := db.Query("SELECT question_id FROM quiz_attempt_questions WHERE attempt_id = ?", attemptID)
+		var qids []int
+		for rows.Next() {
+			var id int
+			rows.Scan(&id)
+			qids = append(qids, id)
+		}
+		rows.Close()
+		for _, qid := range qids {
+			if _, err := db.Exec(
+				"INSERT INTO quiz_attempt_answers (attempt_id, question_id, response, correct) VALUES (?, ?, '{}', 1)",
+				attemptID, qid,
+			); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		q, _, _, done, err := svc.Next(userID, attemptUUID, "en")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !done || q != nil {
+			t.Fatalf("done=%v q=%v, want done=true and q=nil", done, q)
+		}
+	})
+
+	t.Run("rejects an attempt owned by a different user", func(t *testing.T) {
+		db, svc, _, attemptUUID := setup(t)
+		otherUser := insertTestUser(t, db, "other@example.com")
+
+		_, _, _, _, err := svc.Next(otherUser, attemptUUID, "en")
+		if err != services.ErrAttemptForbidden {
+			t.Fatalf("err = %v, want ErrAttemptForbidden", err)
+		}
+	})
+
+	t.Run("returns ErrAttemptNotFound for an unknown uuid", func(t *testing.T) {
+		_, svc, userID, _ := setup(t)
+
+		_, _, _, _, err := svc.Next(userID, "nonexistent-uuid", "en")
+		if err != services.ErrAttemptNotFound {
+			t.Fatalf("err = %v, want ErrAttemptNotFound", err)
+		}
+	})
+
+	t.Run("returns ErrAttemptCompleted once completed_at is set", func(t *testing.T) {
+		db, svc, userID, attemptUUID := setup(t)
+		if _, err := db.Exec("UPDATE quiz_attempts SET completed_at = CURRENT_TIMESTAMP WHERE uuid = ?", attemptUUID); err != nil {
+			t.Fatal(err)
+		}
+
+		_, _, _, _, err := svc.Next(userID, attemptUUID, "en")
+		if err != services.ErrAttemptCompleted {
+			t.Fatalf("err = %v, want ErrAttemptCompleted", err)
 		}
 	})
 }
