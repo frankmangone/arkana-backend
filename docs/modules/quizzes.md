@@ -103,7 +103,7 @@ correspond to a published post, and every tag must already exist — the
 backend rejects the entire batch (400, naming what's missing) before
 writing anything if either check fails.
 
-- `401` (generic message) on an invalid/missing HMAC signature.
+- `401` (generic message) on an invalid/missing signature or a timestamp more than 5 minutes old.
 - `400` if any question has an empty `slug`/`type`, or references an
   unknown post path or tag.
 
@@ -187,17 +187,17 @@ Response:
   "correct": false,
   "skipped": false,
   "correctReveal": { "correctOptionIds": ["b"] },
-  "explanation": "string or null",
+  "explanation": "explanation text here",
   "reinforcement": { "postPaths": ["blockchain-101/how-it-all-began"] },
   "attemptDone": false
 }
 ```
 
-`correctReveal`/`explanation`/`reinforcement` are populated whenever
-`correct` is `false` — wrong or skipped alike (skipping still teaches you
-the right answer) — and omitted entirely on a correct answer. A skip is
-graded `correct: false` with no third scoring branch; `skipped` is
-metadata only.
+`correctReveal` is populated whenever `correct` is `false` (wrong or skipped alike; skipping still teaches you the right answer).
+`explanation` is present only when the question's content has explanation text AND the answer wasn't correct.
+`reinforcement` is present only when the question has linked posts AND the answer wasn't correct.
+All three are omitted entirely (keys not included) on a correct answer, following Go's `json:"...,omitempty"` tag behavior.
+A skip is graded `correct: false` with no third scoring branch; `skipped` is metadata only.
 
 Rejects (409) if `questionId` doesn't match the question actually at the
 attempt's current position — this, plus a uniqueness constraint on
