@@ -33,4 +33,8 @@ func RegisterRoutes(
 		"/api/quiz-attempts/{attemptId}/answers",
 		auth.RequireAuth(http.HandlerFunc(sessionHandler.SubmitAnswer)),
 	).Methods("POST", "OPTIONS")
+	router.Handle(
+		"/api/quiz-attempts/{attemptId}/complete",
+		auth.RequireAuth(http.HandlerFunc(sessionHandler.CompleteAttempt)),
+	).Methods("POST", "OPTIONS")
 }

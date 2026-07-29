@@ -18,6 +18,7 @@ var ErrAttemptNotFound = errors.New("attempt not found")
 var ErrAttemptForbidden = errors.New("attempt belongs to another user")
 var ErrAttemptCompleted = errors.New("attempt already completed")
 var ErrWrongQuestion = errors.New("questionId does not match the attempt's current question")
+var ErrAttemptIncomplete = errors.New("not every question has been answered or skipped")
 
 // QuestionDelivery is the correctness-stripped shape served over
 // GET .../next - deliberately has no answer_key/correct-* field anywhere,
@@ -377,4 +378,61 @@ func (s *QuizSessionService) reinforcement(questionID int, lang string) (explana
 		postPaths = append(postPaths, path)
 	}
 	return parsed.Explanation, postPaths, rows.Err()
+}
+
+type CompleteResult struct {
+	Score  int
+	Passed bool
+}
+
+// Complete finalizes an attempt, requiring every question already have a
+// row in quiz_attempt_answers (answered or skipped, either counts as
+// "resolved"). The client always learns exactly when it's reached this
+// point from the last Answer() call's AttemptDone, so a premature
+// Complete call is a client bug, not a state this method papers over -
+// no auto-skip-the-rest behavior.
+func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*CompleteResult, error) {
+	attempt, err := s.getOwnedAttempt(userID, attemptUUID)
+	if err != nil {
+		return nil, err
+	}
+	if attempt.CompletedAt.Valid {
+		return nil, ErrAttemptCompleted
+	}
+
+	total, err := s.totalQuestions(attempt.ID)
+	if err != nil {
+		return nil, err
+	}
+	answered, err := s.answeredCount(attempt.ID)
+	if err != nil {
+		return nil, err
+	}
+	if answered < total {
+		return nil, ErrAttemptIncomplete
+	}
+
+	var correctCount int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM quiz_attempt_answers WHERE attempt_id = ? AND correct = 1",
+		attempt.ID,
+	).Scan(&correctCount); err != nil {
+		return nil, err
+	}
+
+	score := 0
+	passed := false
+	if total > 0 {
+		score = correctCount * 100 / total
+		passed = float64(correctCount)/float64(total) >= passThreshold
+	}
+
+	if _, err := s.db.Exec(
+		"UPDATE quiz_attempts SET completed_at = CURRENT_TIMESTAMP, score = ?, passed = ? WHERE id = ?",
+		score, passed, attempt.ID,
+	); err != nil {
+		return nil, err
+	}
+
+	return &CompleteResult{Score: score, Passed: passed}, nil
 }

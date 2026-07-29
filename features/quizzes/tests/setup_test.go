@@ -3,6 +3,9 @@ package tests
 import (
 	"database/sql"
 	"testing"
+	"time"
+
+	authsvc "arkana/features/auth/services"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -124,6 +127,16 @@ func setupTestDB(t *testing.T) *sql.DB {
 }
 
 const testAdminSecret = "test-admin-secret"
+const testJWTSecret = "test-secret-key"
+
+func generateTestJWT(t *testing.T, userID int, email string) string {
+	t.Helper()
+	token, err := authsvc.GenerateAccessToken(userID, email, testJWTSecret, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
 
 // fakePostChecker/fakeTagChecker mirror features/readinglists/tests'
 // fakePostChecker: tests that don't exercise validation failures don't

@@ -191,3 +191,71 @@ func TestQuizSessionServiceAnswerFlow(t *testing.T) {
 		}
 	})
 }
+
+func TestQuizSessionServiceComplete(t *testing.T) {
+	t.Run("rejects completing before every question is answered", func(t *testing.T) {
+		_, svc, userID, attemptUUID, _ := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		_, err := svc.Complete(userID, attemptUUID)
+		if err != services.ErrAttemptIncomplete {
+			t.Fatalf("err = %v, want ErrAttemptIncomplete", err)
+		}
+	})
+
+	t.Run("computes a passing score when every answer is correct", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["b"]}`), false, "en"); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := svc.Complete(userID, attemptUUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Score != 100 || !result.Passed {
+			t.Fatalf("Score=%d Passed=%v, want 100 and true", result.Score, result.Passed)
+		}
+	})
+
+	t.Run("computes a failing score when every answer is wrong", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["a"]}`), false, "en"); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := svc.Complete(userID, attemptUUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Score != 0 || result.Passed {
+			t.Fatalf("Score=%d Passed=%v, want 0 and false", result.Score, result.Passed)
+		}
+	})
+
+	t.Run("rejects completing an already-completed attempt", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["b"]}`), false, "en"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Complete(userID, attemptUUID); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := svc.Complete(userID, attemptUUID)
+		if err != services.ErrAttemptCompleted {
+			t.Fatalf("err = %v, want ErrAttemptCompleted", err)
+		}
+	})
+
+	t.Run("rejects completing an attempt owned by another user", func(t *testing.T) {
+		db, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["b"]}`), false, "en"); err != nil {
+			t.Fatal(err)
+		}
+		otherUser := insertTestUser(t, db, "other@example.com")
+
+		_, err := svc.Complete(otherUser, attemptUUID)
+		if err != services.ErrAttemptForbidden {
+			t.Fatalf("err = %v, want ErrAttemptForbidden", err)
+		}
+	})
+}

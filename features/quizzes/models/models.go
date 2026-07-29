@@ -63,3 +63,8 @@ type AnswerResponse struct {
 	Reinforcement *ReinforcementDTO `json:"reinforcement,omitempty"`
 	AttemptDone   bool              `json:"attemptDone"`
 }
+
+type CompleteAttemptResponse struct {
+	Score  int  `json:"score"`
+	Passed bool `json:"passed"`
+}

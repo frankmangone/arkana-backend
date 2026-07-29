@@ -142,3 +142,30 @@ func (h *SessionHandler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
+
+// CompleteAttempt handles POST /api/quiz-attempts/{attemptId}/complete.
+func (h *SessionHandler) CompleteAttempt(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middlewares.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	vars := mux.Vars(r)
+	result, err := h.service.Complete(userID, vars["attemptId"])
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrAttemptNotFound), errors.Is(err, services.ErrAttemptForbidden):
+			httputil.WriteError(w, http.StatusNotFound, "attempt not found")
+		case errors.Is(err, services.ErrAttemptCompleted):
+			httputil.WriteError(w, http.StatusConflict, "attempt already completed")
+		case errors.Is(err, services.ErrAttemptIncomplete):
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		default:
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to complete attempt")
+		}
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, models.CompleteAttemptResponse{Score: result.Score, Passed: result.Passed})
+}
