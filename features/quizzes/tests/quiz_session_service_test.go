@@ -73,4 +73,37 @@ func TestQuizSessionServiceStart(t *testing.T) {
 			t.Fatalf("err = %v, want ErrModuleNotFound", err)
 		}
 	})
+
+	t.Run("pool query dedupes a question linked to two posts within the same module", func(t *testing.T) {
+		db := setupTestDB(t)
+		userID := insertTestUser(t, db, "learner@example.com")
+		moduleID := insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+		postA := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+
+		// A second item in the SAME module, pointing at a different post.
+		postB := insertTestPost(t, db, "blockchain-101/transactions")
+		if _, err := db.Exec(
+			"INSERT INTO reading_list_items (module_id, slug, post_path, position) VALUES (?, 'transactions', 'blockchain-101/transactions', 2)",
+			moduleID,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		// One question linked to BOTH posts - without DISTINCT this would
+		// appear twice in the pool (and could theoretically be picked twice
+		// into the same attempt).
+		questionID := insertTestQuestion(t, db, "shared-question", postA)
+		if _, err := db.Exec("INSERT INTO question_posts (question_id, post_id) VALUES (?, ?)", questionID, postB); err != nil {
+			t.Fatal(err)
+		}
+
+		svc := services.NewQuizSessionService(db)
+		_, total, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 {
+			t.Fatalf("total = %d, want 1 (DISTINCT must dedupe a question linked to two posts in the same module)", total)
+		}
+	})
 }
