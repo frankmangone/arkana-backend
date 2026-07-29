@@ -462,3 +462,33 @@ func TestMissingPaths(t *testing.T) {
 		}
 	})
 }
+
+func TestGetIDsByPaths(t *testing.T) {
+	db := setupTestDB(t)
+	svc := services.NewPostService(db, notifservices.NewNotificationService(db))
+
+	t.Run("returns an empty map for an empty input, without querying", func(t *testing.T) {
+		ids, err := svc.GetIDsByPaths(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 0 {
+			t.Errorf("ids = %v, want empty", ids)
+		}
+	})
+
+	t.Run("resolves known paths and omits unknown ones", func(t *testing.T) {
+		id := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+
+		ids, err := svc.GetIDsByPaths([]string{"blockchain-101/how-it-all-began", "blockchain-101/nonexistent"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 1 {
+			t.Fatalf("ids = %v, want exactly 1 entry", ids)
+		}
+		if ids["blockchain-101/how-it-all-began"] != id {
+			t.Errorf("ids[...] = %d, want %d", ids["blockchain-101/how-it-all-began"], id)
+		}
+	})
+}
