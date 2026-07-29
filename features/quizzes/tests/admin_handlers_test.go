@@ -111,4 +111,33 @@ func TestPublishQuestionsHandler(t *testing.T) {
 			t.Fatalf("status = %d, want 400", rec.Code)
 		}
 	})
+
+	t.Run("rejects a question with an unrecognized type", func(t *testing.T) {
+		db := setupTestDB(t)
+		router := setupQuizRouter(t, db)
+
+		body, _ := json.Marshal(models.QuestionPublishRequest{
+			Questions: []models.QuestionPayload{
+				{Slug: "q1", Type: "not-a-real-type", Difficulty: 1, AnswerKey: json.RawMessage(`{}`)},
+			},
+		})
+		headers := signAdminRequest(testAdminSecret, body)
+		req := httptest.NewRequest("POST", "/api/admin/questions", bytes.NewReader(body))
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, body = %s, want 400", rec.Code, rec.Body.String())
+		}
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM questions").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("questions row count = %d, want 0 (nothing written)", count)
+		}
+	})
 }

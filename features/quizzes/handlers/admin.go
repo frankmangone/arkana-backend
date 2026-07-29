@@ -36,7 +36,7 @@ func (h *AdminQuestionHandler) Publish(w http.ResponseWriter, r *http.Request) {
 
 	n, err := h.service.Publish(req.Questions)
 	if err != nil {
-		if errors.Is(err, services.ErrUnknownPosts) || errors.Is(err, services.ErrUnknownTags) {
+		if errors.Is(err, services.ErrUnknownPosts) || errors.Is(err, services.ErrUnknownTags) || errors.Is(err, services.ErrUnknownQuestionType) {
 			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}

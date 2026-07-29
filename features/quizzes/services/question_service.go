@@ -13,6 +13,20 @@ import (
 var ErrUnknownPosts = errors.New("unknown post path(s)")
 var ErrUnknownTags = errors.New("unknown tag(s)")
 
+// knownQuestionTypes mirrors the set grade() (grading.go) actually
+// dispatches on - kept in sync with it so a type that would fail at
+// answer-time with ErrUnknownQuestionType is instead rejected here, at
+// publish-time.
+var knownQuestionTypes = map[string]bool{
+	"single_choice": true,
+	"multi_choice":  true,
+	"matching":      true,
+	"range":         true,
+	"sequencing":    true,
+	"bucket_sort":   true,
+	"fill_blank":    true,
+}
+
 // PostChecker validates post paths and resolves them to posts.id. Both
 // methods use only primitive types (no *posts/models.Post) so this
 // interface never forces an import of features/posts/models. Satisfied
@@ -46,12 +60,18 @@ func NewQuestionService(db *sql.DB, posts PostChecker, tags TagChecker) *Questio
 // batch are validated before any write; one bad reference anywhere fails
 // the entire call.
 func (s *QuestionService) Publish(payloads []models.QuestionPayload) (int, error) {
-	var allPaths, allTags []string
+	var allPaths, allTags, unknownTypes []string
 	for _, p := range payloads {
 		allPaths = append(allPaths, p.PostPaths...)
 		allTags = append(allTags, p.Tags...)
+		if !knownQuestionTypes[p.Type] {
+			unknownTypes = append(unknownTypes, p.Type)
+		}
 	}
 
+	if len(unknownTypes) > 0 {
+		return 0, fmt.Errorf("%w: %s", ErrUnknownQuestionType, strings.Join(dedupe(unknownTypes), ", "))
+	}
 	if missing, err := s.posts.MissingPaths(dedupe(allPaths)); err != nil {
 		return 0, err
 	} else if len(missing) > 0 {

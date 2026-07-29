@@ -148,3 +148,58 @@ func TestQuizSessionHappyPath(t *testing.T) {
 		t.Fatal("Passed = true, want false (50%% is below the 70%% passThreshold)")
 	}
 }
+
+// TestSubmitAnswerMalformedResponse drives a malformed response through
+// the real HTTP handler (not just the service directly) to confirm the
+// SubmitAnswer error-mapping switch maps services.ErrMalformedResponse to
+// 400, not the default 500 - a bad-input condition, not a server fault.
+func TestSubmitAnswerMalformedResponse(t *testing.T) {
+	db := setupTestDB(t)
+	router := setupQuizRouter(t, db)
+
+	userID := insertTestUser(t, db, "learner@example.com")
+	insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+	postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+
+	q1, err := db.Exec(`INSERT INTO questions (uuid, slug, type, difficulty, answer_key) VALUES ('q1-uuid', 'q1', 'single_choice', 1, '{"correctOptionIds":["b"]}')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q1ID, _ := q1.LastInsertId()
+	if _, err := db.Exec("INSERT INTO question_posts (question_id, post_id) VALUES (?, ?)", q1ID, postID); err != nil {
+		t.Fatal(err)
+	}
+	insertTestQuestionTranslation(t, db, int(q1ID), "en", "q1 prompt", `{}`)
+
+	token := generateTestJWT(t, userID, "learner@example.com")
+	authed := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	startRec := authed("POST", "/api/reading-lists/blockchain-101/modules/bitcoin-and-fundamentals/quiz/attempts", nil)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status = %d, body = %s", startRec.Code, startRec.Body.String())
+	}
+	var start struct {
+		AttemptID string `json:"attemptId"`
+	}
+	if err := json.Unmarshal(startRec.Body.Bytes(), &start); err != nil {
+		t.Fatal(err)
+	}
+
+	// selectedOptionIds is a bare string here, but single_choice's grading
+	// expects an array of strings - this must fail json.Unmarshal inside
+	// grade(), not the type dispatch itself.
+	answerBody, _ := json.Marshal(map[string]any{
+		"questionId": "q1-uuid",
+		"response":   map[string]any{"selectedOptionIds": "b"},
+	})
+	answerRec := authed("POST", "/api/quiz-attempts/"+start.AttemptID+"/answers?lang=en", answerBody)
+	if answerRec.Code != http.StatusBadRequest {
+		t.Fatalf("answer status = %d, body = %s, want 400", answerRec.Code, answerRec.Body.String())
+	}
+}

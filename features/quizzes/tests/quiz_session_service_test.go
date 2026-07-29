@@ -2,6 +2,7 @@ package tests
 
 import (
 	"database/sql"
+	"encoding/json"
 	"testing"
 
 	"arkana/features/quizzes/services"
@@ -244,6 +245,45 @@ func TestQuizSessionServiceNext(t *testing.T) {
 		_, _, _, _, err := svc.Next(userID, attemptUUID, "en")
 		if err != services.ErrAttemptCompleted {
 			t.Fatalf("err = %v, want ErrAttemptCompleted", err)
+		}
+	})
+
+	t.Run("strips the explanation key from content, leaving other fields intact", func(t *testing.T) {
+		db := setupTestDB(t)
+		userID := insertTestUser(t, db, "learner@example.com")
+		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+		q1 := insertTestQuestion(t, db, "q1", postID)
+		insertTestQuestionTranslation(t, db, q1, "en", "What is q1?",
+			`{"options":["a","b"],"explanation":"some explanation text"}`)
+
+		svc := services.NewQuizSessionService(db)
+		attemptUUID, _, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		q, _, _, done, err := svc.Next(userID, attemptUUID, "en")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done || q == nil {
+			t.Fatalf("done = %v, q = %v, want a question and done=false", done, q)
+		}
+
+		var parsed map[string]json.RawMessage
+		if err := json.Unmarshal(q.Content, &parsed); err != nil {
+			t.Fatalf("Content did not unmarshal as an object: %v", err)
+		}
+		if _, ok := parsed["explanation"]; ok {
+			t.Fatalf("Content = %s, want no \"explanation\" key before the question is answered", q.Content)
+		}
+		var opts []string
+		if err := json.Unmarshal(parsed["options"], &opts); err != nil {
+			t.Fatal(err)
+		}
+		if len(opts) != 2 || opts[0] != "a" || opts[1] != "b" {
+			t.Fatalf("options = %v, want [a b] (unrelated content fields must survive stripping)", opts)
 		}
 	})
 }

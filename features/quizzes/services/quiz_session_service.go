@@ -247,8 +247,34 @@ func (s *QuizSessionService) loadQuestionDelivery(questionID int, lang string) (
 	if err != nil {
 		return nil, err
 	}
-	q.Content = json.RawMessage(content)
+	stripped, err := stripExplanation([]byte(content))
+	if err != nil {
+		return nil, err
+	}
+	q.Content = stripped
 	return &q, nil
+}
+
+// stripExplanation removes the top-level "explanation" key (if present)
+// from a question_translations.content JSON blob before it's served over
+// the correctness-stripped Next() read path - that key is reveal-only
+// content, meant to appear solely in the answers response once a
+// question is wrong or skipped (see reinforcement(), which reads this
+// same column independently and is unaffected by this stripping).
+func stripExplanation(content []byte) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(content, &fields); err != nil {
+		return nil, err
+	}
+	if _, ok := fields["explanation"]; !ok {
+		return json.RawMessage(content), nil
+	}
+	delete(fields, "explanation")
+	stripped, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(stripped), nil
 }
 
 type AnswerResult struct {

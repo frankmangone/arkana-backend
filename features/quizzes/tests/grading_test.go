@@ -3,6 +3,7 @@ package tests
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"arkana/features/quizzes/services"
@@ -175,6 +176,24 @@ func TestQuizSessionServiceAnswerFlow(t *testing.T) {
 		}
 		if result.CorrectReveal != nil || result.Explanation != nil || result.PostPaths != nil {
 			t.Fatalf("expected no reveal data on a correct answer, got reveal=%v explanation=%v postPaths=%v", result.CorrectReveal, result.Explanation, result.PostPaths)
+		}
+	})
+
+	t.Run("a response with the wrong shape for the question's type returns ErrMalformedResponse", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		// single_choice expects selectedOptionIds as an array of strings;
+		// a bare string can't unmarshal into that shape.
+		_, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":"b"}`), false, "en")
+		if !errors.Is(err, services.ErrMalformedResponse) {
+			t.Fatalf("err = %v, want ErrMalformedResponse", err)
+		}
+	})
+
+	t.Run("a question whose type grade() doesn't recognize returns ErrUnknownQuestionType", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "not-a-real-type", `{}`)
+		_, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{}`), false, "en")
+		if !errors.Is(err, services.ErrUnknownQuestionType) {
+			t.Fatalf("err = %v, want ErrUnknownQuestionType", err)
 		}
 	})
 

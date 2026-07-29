@@ -131,6 +131,25 @@ func TestQuestionServicePublish(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects the whole batch when a question type is unrecognized", func(t *testing.T) {
+		db := setupTestDB(t)
+		svc := services.NewQuestionService(db, &fakePostChecker{}, &fakeTagChecker{})
+
+		_, err := svc.Publish([]models.QuestionPayload{
+			{Slug: "q1", Type: "not-a-real-type", Difficulty: 1, AnswerKey: json.RawMessage(`{}`)},
+		})
+		if !errors.Is(err, services.ErrUnknownQuestionType) {
+			t.Fatalf("err = %v, want ErrUnknownQuestionType", err)
+		}
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM questions").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("questions row count = %d, want 0 (nothing written)", count)
+		}
+	})
+
 	t.Run("re-publishing without a previously-linked post removes that link only", func(t *testing.T) {
 		db := setupTestDB(t)
 		svc := services.NewQuestionService(db, &fakePostChecker{}, &fakeTagChecker{})

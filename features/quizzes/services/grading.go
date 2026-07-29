@@ -3,9 +3,16 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 var ErrUnknownQuestionType = errors.New("unknown question type")
+
+// ErrMalformedResponse wraps a json.Unmarshal failure on the learner's
+// submitted response - a bad-input condition (the client sent a shape
+// that doesn't match this question's type), not a server fault, so
+// handlers map it to 400 rather than the default 500.
+var ErrMalformedResponse = errors.New("response does not match the question's expected shape")
 
 // grade dispatches to the type-specific comparison function, returning
 // whether response matches answerKey and the type-specific "what was
@@ -64,7 +71,7 @@ func gradeChoice(answerKey, response json.RawMessage) (bool, json.RawMessage, er
 	}
 	var resp choiceResponse
 	if err := json.Unmarshal(response, &resp); err != nil {
-		return false, nil, err
+		return false, nil, fmt.Errorf("%w: %v", ErrMalformedResponse, err)
 	}
 	reveal, err := json.Marshal(map[string][]string{"correctOptionIds": key.CorrectOptionIDs})
 	return sameSet(key.CorrectOptionIDs, resp.SelectedOptionIDs), reveal, err
@@ -86,7 +93,7 @@ func gradeAssignments(answerKey, response json.RawMessage) (bool, json.RawMessag
 	}
 	var resp assignmentsResponse
 	if err := json.Unmarshal(response, &resp); err != nil {
-		return false, nil, err
+		return false, nil, fmt.Errorf("%w: %v", ErrMalformedResponse, err)
 	}
 	reveal, err := json.Marshal(map[string]map[string]string{"correctAssignments": key.CorrectAssignments})
 	if err != nil {
@@ -121,7 +128,7 @@ func gradeRange(answerKey, response json.RawMessage) (bool, json.RawMessage, err
 	}
 	var resp rangeResponse
 	if err := json.Unmarshal(response, &resp); err != nil {
-		return false, nil, err
+		return false, nil, fmt.Errorf("%w: %v", ErrMalformedResponse, err)
 	}
 	reveal, err := json.Marshal(map[string]map[string]rangeValue{"correctValues": key.CorrectValues})
 	if err != nil {
@@ -157,7 +164,7 @@ func gradeSequencing(answerKey, response json.RawMessage) (bool, json.RawMessage
 	}
 	var resp sequencingResponse
 	if err := json.Unmarshal(response, &resp); err != nil {
-		return false, nil, err
+		return false, nil, fmt.Errorf("%w: %v", ErrMalformedResponse, err)
 	}
 	reveal, err := json.Marshal(map[string][]string{"correctOrder": key.CorrectOrder})
 	if err != nil {
@@ -188,7 +195,7 @@ func gradeFillBlank(answerKey, response json.RawMessage) (bool, json.RawMessage,
 	}
 	var resp fillBlankResponse
 	if err := json.Unmarshal(response, &resp); err != nil {
-		return false, nil, err
+		return false, nil, fmt.Errorf("%w: %v", ErrMalformedResponse, err)
 	}
 	reveal, err := json.Marshal(map[string]map[string]string{"correctWords": key.CorrectWords})
 	if err != nil {
