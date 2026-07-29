@@ -136,8 +136,8 @@ func TestQuestionServicePublish(t *testing.T) {
 		svc := services.NewQuestionService(db, &fakePostChecker{}, &fakeTagChecker{})
 		payload := models.QuestionPayload{
 			Slug: "q1", Type: "single_choice", Difficulty: 1,
-			PostPaths: []string{"a/one", "a/two"},
-			AnswerKey: json.RawMessage(`{}`),
+			PostPaths:    []string{"a/one", "a/two"},
+			AnswerKey:    json.RawMessage(`{}`),
 			Translations: map[string]models.QuestionTranslationPayload{"en": {Prompt: "p", Content: json.RawMessage(`{}`)}},
 		}
 		if _, err := svc.Publish([]models.QuestionPayload{payload}); err != nil {

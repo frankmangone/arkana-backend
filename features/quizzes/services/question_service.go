@@ -30,7 +30,7 @@ type TagChecker interface {
 }
 
 type QuestionService struct {
-	db   *sql.DB
+	db    *sql.DB
 	posts PostChecker
 	tags  TagChecker
 }
