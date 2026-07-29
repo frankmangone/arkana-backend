@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -82,6 +83,62 @@ func (h *SessionHandler) NextQuestion(w http.ResponseWriter, r *http.Request) {
 	resp := models.NextQuestionResponse{Position: position, TotalQuestions: total, Done: done}
 	if q != nil {
 		resp.Question = &models.QuestionDTO{UUID: q.UUID, Type: q.Type, Difficulty: q.Difficulty, Prompt: q.Prompt, Content: q.Content}
+	}
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// SubmitAnswer handles POST /api/quiz-attempts/{attemptId}/answers. Body
+// must contain exactly one of response or skipped.
+func (h *SessionHandler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middlewares.GetUserIDFromContext(r.Context())
+	if !ok {
+		httputil.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	lang := r.URL.Query().Get("lang")
+	if lang == "" {
+		lang = "en"
+	}
+	if !supportedLangs[lang] {
+		httputil.WriteError(w, http.StatusBadRequest, "unsupported lang parameter")
+		return
+	}
+
+	var req models.AnswerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	hasResponse := len(req.Response) > 0
+	if req.QuestionID == "" || hasResponse == req.Skipped {
+		httputil.WriteError(w, http.StatusBadRequest, "exactly one of response or skipped must be present")
+		return
+	}
+
+	vars := mux.Vars(r)
+	result, err := h.service.Answer(userID, vars["attemptId"], req.QuestionID, req.Response, req.Skipped, lang)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrAttemptNotFound), errors.Is(err, services.ErrAttemptForbidden):
+			httputil.WriteError(w, http.StatusNotFound, "attempt not found")
+		case errors.Is(err, services.ErrAttemptCompleted):
+			httputil.WriteError(w, http.StatusConflict, "attempt already completed")
+		case errors.Is(err, services.ErrWrongQuestion):
+			httputil.WriteError(w, http.StatusConflict, err.Error())
+		default:
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to submit answer")
+		}
+		return
+	}
+
+	resp := models.AnswerResponse{Correct: result.Correct, Skipped: result.Skipped, AttemptDone: result.AttemptDone}
+	if !result.Correct {
+		resp.CorrectReveal = result.CorrectReveal
+		resp.Explanation = result.Explanation
+		if len(result.PostPaths) > 0 {
+			resp.Reinforcement = &models.ReinforcementDTO{PostPaths: result.PostPaths}
+		}
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }

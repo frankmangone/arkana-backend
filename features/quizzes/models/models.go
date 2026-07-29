@@ -44,3 +44,22 @@ type NextQuestionResponse struct {
 	TotalQuestions int          `json:"totalQuestions"`
 	Done           bool         `json:"done"`
 }
+
+type AnswerRequest struct {
+	QuestionID string          `json:"questionId"`
+	Response   json.RawMessage `json:"response,omitempty"`
+	Skipped    bool            `json:"skipped,omitempty"`
+}
+
+type ReinforcementDTO struct {
+	PostPaths []string `json:"postPaths"`
+}
+
+type AnswerResponse struct {
+	Correct       bool              `json:"correct"`
+	Skipped       bool              `json:"skipped"`
+	CorrectReveal json.RawMessage   `json:"correctReveal,omitempty"`
+	Explanation   *string           `json:"explanation,omitempty"`
+	Reinforcement *ReinforcementDTO `json:"reinforcement,omitempty"`
+	AttemptDone   bool              `json:"attemptDone"`
+}

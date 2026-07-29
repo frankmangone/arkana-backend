@@ -17,6 +17,7 @@ var ErrModuleNotFound = errors.New("module not found")
 var ErrAttemptNotFound = errors.New("attempt not found")
 var ErrAttemptForbidden = errors.New("attempt belongs to another user")
 var ErrAttemptCompleted = errors.New("attempt already completed")
+var ErrWrongQuestion = errors.New("questionId does not match the attempt's current question")
 
 // QuestionDelivery is the correctness-stripped shape served over
 // GET .../next - deliberately has no answer_key/correct-* field anywhere,
@@ -247,4 +248,133 @@ func (s *QuizSessionService) loadQuestionDelivery(questionID int, lang string) (
 	}
 	q.Content = json.RawMessage(content)
 	return &q, nil
+}
+
+type AnswerResult struct {
+	Correct       bool
+	Skipped       bool
+	CorrectReveal json.RawMessage
+	Explanation   *string
+	PostPaths     []string
+	AttemptDone   bool
+}
+
+// Answer grades questionUUID's response (or records a skip) against the
+// question at the attempt's current position, advancing it. Rejects if
+// questionUUID isn't the question actually at that position - this, plus
+// UNIQUE(attempt_id, question_id) on quiz_attempt_answers, is what stops
+// answering out of order or twice.
+func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string, response json.RawMessage, skipped bool, lang string) (*AnswerResult, error) {
+	attempt, err := s.getOwnedAttempt(userID, attemptUUID)
+	if err != nil {
+		return nil, err
+	}
+	if attempt.CompletedAt.Valid {
+		return nil, ErrAttemptCompleted
+	}
+
+	answered, err := s.answeredCount(attempt.ID)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.totalQuestions(attempt.ID)
+	if err != nil {
+		return nil, err
+	}
+	if answered >= total {
+		return nil, ErrAttemptCompleted
+	}
+
+	var questionID int
+	var questionUUIDAtPosition, qType, answerKey string
+	if err := s.db.QueryRow(`
+		SELECT q.id, q.uuid, q.type, q.answer_key
+		FROM quiz_attempt_questions qaq
+		JOIN questions q ON q.id = qaq.question_id
+		WHERE qaq.attempt_id = ? AND qaq.position = ?
+	`, attempt.ID, answered).Scan(&questionID, &questionUUIDAtPosition, &qType, &answerKey); err != nil {
+		return nil, err
+	}
+	if questionUUIDAtPosition != questionUUID {
+		return nil, ErrWrongQuestion
+	}
+
+	var correct bool
+	var reveal json.RawMessage
+	responseToStore := response
+	if skipped {
+		responseToStore = json.RawMessage("null")
+		// reveal depends only on answerKey, so grading against an empty
+		// response still produces the right "what was correct" payload;
+		// correctness is forced to false regardless, since a skip never
+		// counts as correct.
+		_, reveal, err = grade(qType, json.RawMessage(answerKey), json.RawMessage(`{}`))
+		if err != nil {
+			return nil, err
+		}
+		correct = false
+	} else {
+		correct, reveal, err = grade(qType, json.RawMessage(answerKey), response)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := s.db.Exec(
+		`INSERT INTO quiz_attempt_answers (attempt_id, question_id, response, correct, skipped) VALUES (?, ?, ?, ?, ?)`,
+		attempt.ID, questionID, string(responseToStore), correct, skipped,
+	); err != nil {
+		return nil, err
+	}
+
+	result := &AnswerResult{Correct: correct, Skipped: skipped, AttemptDone: answered+1 >= total}
+	if !correct {
+		result.CorrectReveal = reveal
+		explanation, postPaths, err := s.reinforcement(questionID, lang)
+		if err != nil {
+			return nil, err
+		}
+		result.Explanation = explanation
+		result.PostPaths = postPaths
+	}
+	return result, nil
+}
+
+// reinforcement loads the optional explanation string embedded in this
+// question's translated content, plus every post linked via
+// question_posts (no "primary" post - reinforcement surfaces all of
+// them).
+func (s *QuizSessionService) reinforcement(questionID int, lang string) (explanation *string, postPaths []string, err error) {
+	var content string
+	if err := s.db.QueryRow(
+		"SELECT content FROM question_translations WHERE question_id = ? AND lang = ?",
+		questionID, lang,
+	).Scan(&content); err != nil {
+		return nil, nil, err
+	}
+	var parsed struct {
+		Explanation *string `json:"explanation"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return nil, nil, err
+	}
+
+	rows, err := s.db.Query(`
+		SELECT p.path_identifier
+		FROM question_posts qp
+		JOIN posts p ON p.id = qp.post_id
+		WHERE qp.question_id = ?
+	`, questionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, nil, err
+		}
+		postPaths = append(postPaths, path)
+	}
+	return parsed.Explanation, postPaths, rows.Err()
 }
