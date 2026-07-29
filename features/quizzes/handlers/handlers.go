@@ -10,11 +10,6 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// sessions and auth are accepted now (rather than added to this
-// signature later) so RegisterRoutes's signature doesn't change again
-// once Tasks 4-7 register session routes against them - unused function
-// parameters are not a compile error in Go, so no placeholder is needed
-// for them here.
 func RegisterRoutes(
 	router *mux.Router,
 	questions *services.QuestionService,
@@ -23,6 +18,11 @@ func RegisterRoutes(
 	adminAuth *adminauth.AdminAuthMiddleware,
 ) {
 	adminHandler := NewAdminQuestionHandler(questions)
+	sessionHandler := NewSessionHandler(sessions)
 
 	router.Handle("/api/admin/questions", adminAuth.RequireHMAC(http.HandlerFunc(adminHandler.Publish))).Methods("POST", "OPTIONS")
+	router.Handle(
+		"/api/reading-lists/{listSlug}/modules/{moduleSlug}/quiz/attempts",
+		auth.RequireAuth(http.HandlerFunc(sessionHandler.StartAttempt)),
+	).Methods("POST", "OPTIONS")
 }

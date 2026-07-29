@@ -182,3 +182,70 @@ func (f *fakeTagChecker) GetIDsBySlugs(slugs []string) (map[string]int, error) {
 	}
 	return result, nil
 }
+
+func insertTestUser(t *testing.T, db *sql.DB, email string) int {
+	t.Helper()
+	result, err := db.Exec(
+		`INSERT INTO users (email, auth_provider, provider_user_id) VALUES (?, 'google', ?)`,
+		email, email,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	return int(id)
+}
+
+func insertTestPost(t *testing.T, db *sql.DB, path string) int {
+	t.Helper()
+	result, err := db.Exec("INSERT INTO posts (path_identifier, like_count) VALUES (?, 0)", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := result.LastInsertId()
+	return int(id)
+}
+
+// insertTestModule seeds a full reading_lists -> reading_list_modules ->
+// reading_list_items chain (one item, pointing at postPath) and returns
+// the module's id - the exact granularity QuizSessionService queries by.
+func insertTestModule(t *testing.T, db *sql.DB, listSlug, moduleSlug, itemSlug, postPath string) int {
+	t.Helper()
+	res, err := db.Exec("INSERT INTO reading_lists (slug) VALUES (?)", listSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listID, _ := res.LastInsertId()
+
+	res, err = db.Exec("INSERT INTO reading_list_modules (reading_list_id, slug, position) VALUES (?, ?, 1)", listID, moduleSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleID, _ := res.LastInsertId()
+
+	if _, err := db.Exec(
+		"INSERT INTO reading_list_items (module_id, slug, post_path, position) VALUES (?, ?, ?, 1)",
+		moduleID, itemSlug, postPath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return int(moduleID)
+}
+
+// insertTestQuestion seeds a questions row plus its question_posts link
+// to postID, returning the question's internal id.
+func insertTestQuestion(t *testing.T, db *sql.DB, slug string, postID int) int {
+	t.Helper()
+	res, err := db.Exec(
+		`INSERT INTO questions (uuid, slug, type, difficulty, answer_key) VALUES (?, ?, 'single_choice', 1, '{}')`,
+		slug+"-uuid", slug,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	questionID, _ := res.LastInsertId()
+	if _, err := db.Exec("INSERT INTO question_posts (question_id, post_id) VALUES (?, ?)", questionID, postID); err != nil {
+		t.Fatal(err)
+	}
+	return int(questionID)
+}

@@ -24,3 +24,8 @@ type QuestionPublishRequest struct {
 type QuestionPublishResponse struct {
 	Published int `json:"published"`
 }
+
+type StartAttemptResponse struct {
+	AttemptID      string `json:"attemptId"`
+	TotalQuestions int    `json:"totalQuestions"`
+}
