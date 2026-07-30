@@ -146,3 +146,39 @@ func (s *TagService) MissingTags(slugs []string) ([]string, error) {
 	}
 	return missing, nil
 }
+
+// GetIDsBySlugs returns a map of slug -> tags.id for every slug that has a
+// matching row; slugs with no match are simply absent. Same decoupling
+// rationale as PostService.GetIDsByPaths.
+func (s *TagService) GetIDsBySlugs(slugs []string) (map[string]int, error) {
+	if len(slugs) == 0 {
+		return map[string]int{}, nil
+	}
+
+	placeholders := make([]string, len(slugs))
+	args := make([]interface{}, len(slugs))
+	for i, slug := range slugs {
+		placeholders[i] = "?"
+		args[i] = slug
+	}
+
+	rows, err := s.db.Query(
+		fmt.Sprintf("SELECT id, slug FROM tags WHERE slug IN (%s)", strings.Join(placeholders, ",")),
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]int, len(slugs))
+	for rows.Next() {
+		var id int
+		var slug string
+		if err := rows.Scan(&id, &slug); err != nil {
+			return nil, err
+		}
+		result[slug] = id
+	}
+	return result, rows.Err()
+}

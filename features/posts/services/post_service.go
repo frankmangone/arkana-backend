@@ -108,6 +108,45 @@ func (s *PostService) MissingPaths(paths []string) ([]string, error) {
 	return missing, nil
 }
 
+// GetIDsByPaths returns a map of path_identifier -> posts.id for every
+// path that has a matching row; paths with no match are simply absent.
+// Callers that need to reject unknown paths call MissingPaths first —
+// this method only resolves ids, never validates. Kept on PostService
+// (rather than returning *models.Post) so a structural interface calling
+// it never needs to import features/posts/models.
+func (s *PostService) GetIDsByPaths(paths []string) (map[string]int, error) {
+	if len(paths) == 0 {
+		return map[string]int{}, nil
+	}
+
+	placeholders := make([]string, len(paths))
+	args := make([]interface{}, len(paths))
+	for i, p := range paths {
+		placeholders[i] = "?"
+		args[i] = p
+	}
+
+	rows, err := s.db.Query(
+		fmt.Sprintf("SELECT id, path_identifier FROM posts WHERE path_identifier IN (%s)", strings.Join(placeholders, ",")),
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]int, len(paths))
+	for rows.Next() {
+		var id int
+		var path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		result[path] = id
+	}
+	return result, rows.Err()
+}
+
 // ToggleLike adds or removes a like for the given user on the given post.
 // On the unlike→like transition only, it notifies the post's writer (if
 // set) as part of the same transaction.

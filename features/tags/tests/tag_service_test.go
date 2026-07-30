@@ -184,3 +184,37 @@ func TestTagServiceMissingTags(t *testing.T) {
 		}
 	})
 }
+
+func TestGetIDsBySlugs(t *testing.T) {
+	db := setupTestDB(t)
+	svc := newTagService(db)
+
+	t.Run("returns an empty map for an empty input", func(t *testing.T) {
+		ids, err := svc.GetIDsBySlugs(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 0 {
+			t.Errorf("ids = %v, want empty", ids)
+		}
+	})
+
+	t.Run("resolves known slugs and omits unknown ones", func(t *testing.T) {
+		if _, err := svc.Sync([]models.TagPayload{
+			{Slug: "cryptography", Translations: map[string]string{"en": "Cryptography"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		ids, err := svc.GetIDsBySlugs([]string{"cryptography", "nonexistent"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 1 {
+			t.Fatalf("ids = %v, want exactly 1 entry", ids)
+		}
+		if _, ok := ids["cryptography"]; !ok {
+			t.Errorf("ids[cryptography] missing")
+		}
+	})
+}
