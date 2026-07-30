@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"arkana/shared/idgen"
 )
@@ -58,15 +59,7 @@ func (s *QuizSessionService) CanAttempt(userID, moduleID int) (bool, error) {
 // this is what makes every later Next() call a trivial, idempotent
 // lookup instead of a re-run of selection logic.
 func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (attemptUUID string, totalQuestions int, err error) {
-	var moduleID int
-	err = s.db.QueryRow(`
-		SELECT rlm.id FROM reading_list_modules rlm
-		JOIN reading_lists rl ON rl.id = rlm.reading_list_id
-		WHERE rl.slug = ? AND rlm.slug = ?
-	`, listSlug, moduleSlug).Scan(&moduleID)
-	if err == sql.ErrNoRows {
-		return "", 0, ErrModuleNotFound
-	}
+	moduleID, err := s.resolveModuleID(listSlug, moduleSlug)
 	if err != nil {
 		return "", 0, err
 	}
@@ -126,6 +119,77 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 		return "", 0, err
 	}
 	return uuid, len(chosen), nil
+}
+
+// resolveModuleID looks up a reading_list_modules.id from its public
+// listSlug/moduleSlug pair, shared by Start and Availability so there's
+// exactly one place that translates "not found" into ErrModuleNotFound.
+func (s *QuizSessionService) resolveModuleID(listSlug, moduleSlug string) (int, error) {
+	var moduleID int
+	err := s.db.QueryRow(`
+		SELECT rlm.id FROM reading_list_modules rlm
+		JOIN reading_lists rl ON rl.id = rlm.reading_list_id
+		WHERE rl.slug = ? AND rlm.slug = ?
+	`, listSlug, moduleSlug).Scan(&moduleID)
+	if err == sql.ErrNoRows {
+		return 0, ErrModuleNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return moduleID, nil
+}
+
+// Availability reports whether a module currently has any quiz questions
+// at all, and if so, which languages have full translation coverage over
+// the *current* pool - every question in questionPool(moduleID) must have
+// a question_translations row for a language to count as available in it.
+// This mirrors questionPool exactly (same query, same source of truth as
+// Start/Next) so this can never drift from what a real attempt would try
+// to serve, and avoids the untranslated-question failure loadQuestionDelivery
+// would otherwise hit mid-session.
+func (s *QuizSessionService) Availability(listSlug, moduleSlug string) (available bool, languages []string, err error) {
+	moduleID, err := s.resolveModuleID(listSlug, moduleSlug)
+	if err != nil {
+		return false, nil, err
+	}
+
+	pool, err := s.questionPool(moduleID)
+	if err != nil {
+		return false, nil, err
+	}
+	if len(pool) == 0 {
+		return false, []string{}, nil
+	}
+
+	ids := make([]any, len(pool))
+	placeholders := make([]string, len(pool))
+	for i, q := range pool {
+		ids[i] = q.ID
+		placeholders[i] = "?"
+	}
+
+	query := `
+		SELECT lang FROM question_translations
+		WHERE question_id IN (` + strings.Join(placeholders, ",") + `)
+		GROUP BY lang
+		HAVING COUNT(DISTINCT question_id) = ?
+	`
+	rows, err := s.db.Query(query, append(ids, len(pool))...)
+	if err != nil {
+		return false, nil, err
+	}
+	defer rows.Close()
+
+	languages = []string{}
+	for rows.Next() {
+		var lang string
+		if err := rows.Scan(&lang); err != nil {
+			return false, nil, err
+		}
+		languages = append(languages, lang)
+	}
+	return true, languages, rows.Err()
 }
 
 // questionPool assembles every question linked (via question_posts) to a

@@ -30,6 +30,11 @@ type StartAttemptResponse struct {
 	TotalQuestions int    `json:"totalQuestions"`
 }
 
+type AvailabilityResponse struct {
+	Available bool     `json:"available"`
+	Languages []string `json:"languages"`
+}
+
 type QuestionDTO struct {
 	UUID       string          `json:"uuid"`
 	Type       string          `json:"type"`

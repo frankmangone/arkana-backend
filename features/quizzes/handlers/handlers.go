@@ -26,6 +26,10 @@ func RegisterRoutes(
 		auth.RequireAuth(http.HandlerFunc(sessionHandler.StartAttempt)),
 	).Methods("POST", "OPTIONS")
 	router.Handle(
+		"/api/reading-lists/{listSlug}/modules/{moduleSlug}/quiz/availability",
+		http.HandlerFunc(sessionHandler.Availability),
+	).Methods("GET", "OPTIONS")
+	router.Handle(
 		"/api/quiz-attempts/{attemptId}/next",
 		auth.RequireAuth(http.HandlerFunc(sessionHandler.NextQuestion)),
 	).Methods("GET", "OPTIONS")
