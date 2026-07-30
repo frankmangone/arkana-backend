@@ -47,6 +47,24 @@ func (h *SessionHandler) StartAttempt(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, models.StartAttemptResponse{AttemptID: attemptUUID, TotalQuestions: total})
 }
 
+// Availability handles GET /api/reading-lists/{listSlug}/modules/{moduleSlug}/quiz/availability.
+// Public - no user identity or attempt state is involved, only whether the
+// module currently has a quiz pool and which languages fully cover it.
+func (h *SessionHandler) Availability(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	available, languages, err := h.service.Availability(vars["listSlug"], vars["moduleSlug"])
+	if err != nil {
+		if errors.Is(err, services.ErrModuleNotFound) {
+			httputil.WriteError(w, http.StatusNotFound, "module not found")
+			return
+		}
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to check quiz availability")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, models.AvailabilityResponse{Available: available, Languages: languages})
+}
+
 // NextQuestion handles GET /api/quiz-attempts/{attemptId}/next.
 func (h *SessionHandler) NextQuestion(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middlewares.GetUserIDFromContext(r.Context())
