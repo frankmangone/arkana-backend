@@ -265,6 +265,51 @@ func TestQuizSessionServiceComplete(t *testing.T) {
 		}
 	})
 
+	t.Run("a perfect attempt returns no review post paths", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["b"]}`), false, "en"); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := svc.Complete(userID, attemptUUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.ReviewPostPaths) != 0 {
+			t.Fatalf("ReviewPostPaths = %v, want empty", result.ReviewPostPaths)
+		}
+	})
+
+	t.Run("a wrong answer's linked posts come back as review post paths", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["a"]}`), false, "en"); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := svc.Complete(userID, attemptUUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.ReviewPostPaths) != 1 || result.ReviewPostPaths[0] != "list-1/item-1" {
+			t.Fatalf("ReviewPostPaths = %v, want [list-1/item-1]", result.ReviewPostPaths)
+		}
+	})
+
+	t.Run("a skipped question's linked posts come back as review post paths", func(t *testing.T) {
+		_, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
+		if _, err := svc.Answer(userID, attemptUUID, questionUUID, nil, true, "en"); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := svc.Complete(userID, attemptUUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.ReviewPostPaths) != 1 || result.ReviewPostPaths[0] != "list-1/item-1" {
+			t.Fatalf("ReviewPostPaths = %v, want [list-1/item-1]", result.ReviewPostPaths)
+		}
+	})
+
 	t.Run("rejects completing an attempt owned by another user", func(t *testing.T) {
 		db, svc, userID, attemptUUID, questionUUID := seedSingleQuestionAttempt(t, "single_choice", `{"correctOptionIds":["b"]}`)
 		if _, err := svc.Answer(userID, attemptUUID, questionUUID, json.RawMessage(`{"selectedOptionIds":["b"]}`), false, "en"); err != nil {

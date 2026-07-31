@@ -495,6 +495,11 @@ func (s *QuizSessionService) reinforcement(questionID int, lang string) (explana
 type CompleteResult struct {
 	Score  int
 	Passed bool
+	// Reinforcement posts aggregated over every missed (wrong or skipped)
+	// answer, in the order they were missed - the server-side version of
+	// what per-answer reinforcement already reports, so review pointers
+	// survive resumed attempts.
+	ReviewPostPaths []string
 }
 
 // Complete finalizes an attempt, requiring every question already have a
@@ -546,5 +551,39 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 		return nil, err
 	}
 
-	return &CompleteResult{Score: score, Passed: passed}, nil
+	reviewPaths, err := s.reviewPostPaths(attempt.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CompleteResult{Score: score, Passed: passed, ReviewPostPaths: reviewPaths}, nil
+}
+
+// reviewPostPaths aggregates the reinforcement posts of every missed
+// (wrong or skipped) answer in an attempt, deduped, ordered by when the
+// miss happened.
+func (s *QuizSessionService) reviewPostPaths(attemptID int) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT p.path_identifier
+		FROM quiz_attempt_answers qaa
+		JOIN question_posts qp ON qp.question_id = qaa.question_id
+		JOIN posts p ON p.id = qp.post_id
+		WHERE qaa.attempt_id = ? AND qaa.correct = 0
+		GROUP BY p.path_identifier
+		ORDER BY MIN(qaa.id)
+	`, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	paths := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, rows.Err()
 }

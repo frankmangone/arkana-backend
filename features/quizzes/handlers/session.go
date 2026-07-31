@@ -194,5 +194,9 @@ func (h *SessionHandler) CompleteAttempt(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, models.CompleteAttemptResponse{Score: result.Score, Passed: result.Passed})
+	httputil.WriteJSON(w, http.StatusOK, models.CompleteAttemptResponse{
+		Score:           result.Score,
+		Passed:          result.Passed,
+		ReviewPostPaths: result.ReviewPostPaths,
+	})
 }

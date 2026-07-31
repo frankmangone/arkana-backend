@@ -70,6 +70,7 @@ type AnswerResponse struct {
 }
 
 type CompleteAttemptResponse struct {
-	Score  int  `json:"score"`
-	Passed bool `json:"passed"`
+	Score           int      `json:"score"`
+	Passed          bool     `json:"passed"`
+	ReviewPostPaths []string `json:"reviewPostPaths"`
 }
