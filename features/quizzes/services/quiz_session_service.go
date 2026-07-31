@@ -54,14 +54,36 @@ func (s *QuizSessionService) CanAttempt(userID, moduleID int) (bool, error) {
 	return true, nil
 }
 
-// Start begins a new attempt for the given module, running the selector
-// once and persisting its full pick-order into quiz_attempt_questions -
-// this is what makes every later Next() call a trivial, idempotent
-// lookup instead of a re-run of selection logic.
+// Start is get-or-create: if the user already has an in-progress attempt
+// for this module it's resumed (navigating away and back never burns a new
+// attempt, and the POST is idempotent); otherwise it begins a new attempt,
+// running the selector once and persisting its full pick-order into
+// quiz_attempt_questions - this is what makes every later Next() call a
+// trivial, idempotent lookup instead of a re-run of selection logic.
 func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (attemptUUID string, totalQuestions int, err error) {
 	moduleID, err := s.resolveModuleID(listSlug, moduleSlug)
 	if err != nil {
 		return "", 0, err
+	}
+
+	// Resume before the CanAttempt gate - finishing an attempt already
+	// started must never be blocked by a future attempt-count limit.
+	var existingID int
+	var existingUUID string
+	err = s.db.QueryRow(`
+		SELECT id, uuid FROM quiz_attempts
+		WHERE user_id = ? AND module_id = ? AND completed_at IS NULL
+		ORDER BY id DESC LIMIT 1
+	`, userID, moduleID).Scan(&existingID, &existingUUID)
+	if err != nil && err != sql.ErrNoRows {
+		return "", 0, err
+	}
+	if err == nil {
+		total, err := s.totalQuestions(existingID)
+		if err != nil {
+			return "", 0, err
+		}
+		return existingUUID, total, nil
 	}
 
 	if ok, err := s.CanAttempt(userID, moduleID); err != nil {

@@ -108,6 +108,89 @@ func TestQuizSessionServiceStart(t *testing.T) {
 			t.Fatalf("total = %d, want 1 (DISTINCT must dedupe a question linked to two posts in the same module)", total)
 		}
 	})
+
+	t.Run("resumes an in-progress attempt instead of creating a new one", func(t *testing.T) {
+		db := setupTestDB(t)
+		userID := insertTestUser(t, db, "learner@example.com")
+		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+		insertTestQuestion(t, db, "q1", postID)
+		insertTestQuestion(t, db, "q2", postID)
+
+		svc := services.NewQuizSessionService(db)
+		firstUUID, firstTotal, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondUUID, secondTotal, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if secondUUID != firstUUID {
+			t.Fatalf("second Start returned uuid %q, want the in-progress attempt %q", secondUUID, firstUUID)
+		}
+		if secondTotal != firstTotal {
+			t.Fatalf("second Start total = %d, want %d", secondTotal, firstTotal)
+		}
+
+		var attemptCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM quiz_attempts WHERE user_id = ?", userID).Scan(&attemptCount); err != nil {
+			t.Fatal(err)
+		}
+		if attemptCount != 1 {
+			t.Fatalf("attempt row count = %d, want 1 (Start must be get-or-create)", attemptCount)
+		}
+	})
+
+	t.Run("resume is per-user - another user's in-progress attempt is not shared", func(t *testing.T) {
+		db := setupTestDB(t)
+		userA := insertTestUser(t, db, "learner@example.com")
+		userB := insertTestUser(t, db, "other@example.com")
+		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+		insertTestQuestion(t, db, "q1", postID)
+
+		svc := services.NewQuizSessionService(db)
+		uuidA, _, err := svc.Start(userA, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		uuidB, _, err := svc.Start(userB, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if uuidA == uuidB {
+			t.Fatal("users must never share an attempt")
+		}
+	})
+
+	t.Run("a completed attempt is not resumed - a fresh one is created", func(t *testing.T) {
+		db := setupTestDB(t)
+		userID := insertTestUser(t, db, "learner@example.com")
+		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
+		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
+		insertTestQuestion(t, db, "q1", postID)
+
+		svc := services.NewQuizSessionService(db)
+		firstUUID, _, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(
+			"UPDATE quiz_attempts SET completed_at = CURRENT_TIMESTAMP WHERE uuid = ?",
+			firstUUID,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		secondUUID, _, err := svc.Start(userID, "blockchain-101", "bitcoin-and-fundamentals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if secondUUID == firstUUID {
+			t.Fatal("Start resumed a completed attempt - it must create a fresh one")
+		}
+	})
 }
 
 func TestQuizSessionServiceNext(t *testing.T) {
