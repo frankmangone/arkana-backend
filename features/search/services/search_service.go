@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"arkana/features/search/models"
+	"arkana/features/search/queries"
 )
 
 // ErrSearchUnavailable indicates the Meilisearch backend could not be reached
@@ -21,6 +21,7 @@ var ErrSearchUnavailable = errors.New("search backend unavailable")
 
 type SearchService struct {
 	db         *sql.DB
+	queries    queries.SearchQueries
 	host       string
 	masterKey  string
 	httpClient *http.Client
@@ -29,6 +30,7 @@ type SearchService struct {
 func NewSearchService(db *sql.DB, host, masterKey string) *SearchService {
 	return &SearchService{
 		db:         db,
+		queries:    queries.NewSQLSearchQueries(db),
 		host:       host,
 		masterKey:  masterKey,
 		httpClient: &http.Client{},
@@ -251,18 +253,5 @@ func (s *SearchService) postMeili(url string, payload any, out any) error {
 // extension; Meilisearch hits don't, so it's appended here. A missing row or
 // unset thumbnail just yields "" rather than failing the whole search.
 func (s *SearchService) lookupThumbnail(lang, path string) string {
-	var thumbnail sql.NullString
-
-	err := s.db.QueryRow(
-		"SELECT thumbnail FROM post_contents WHERE lang = ? AND path = ?",
-		lang, path+".md",
-	).Scan(&thumbnail)
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			log.Printf("[Search] thumbnail lookup failed for lang=%q path=%q: %v", lang, path, err)
-		}
-		return ""
-	}
-
-	return thumbnail.String
+	return s.queries.LookupThumbnail(lang, path)
 }
