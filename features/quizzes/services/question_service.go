@@ -1,13 +1,12 @@
 package services
 
 import (
+	"arkana/features/quizzes/models"
+	"arkana/features/quizzes/queries"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
-
-	"arkana/features/quizzes/models"
-	"arkana/shared/idgen"
 )
 
 var ErrUnknownPosts = errors.New("unknown post path(s)")
@@ -44,13 +43,14 @@ type TagChecker interface {
 }
 
 type QuestionService struct {
-	db    *sql.DB
-	posts PostChecker
-	tags  TagChecker
+	db      *sql.DB
+	queries queries.QuestionQueries
+	posts   PostChecker
+	tags    TagChecker
 }
 
 func NewQuestionService(db *sql.DB, posts PostChecker, tags TagChecker) *QuestionService {
-	return &QuestionService{db: db, posts: posts, tags: tags}
+	return &QuestionService{db: db, queries: queries.NewSQLQuestionQueries(db), posts: posts, tags: tags}
 }
 
 // Publish upserts a batch of questions in one transaction, add/update
@@ -97,19 +97,20 @@ func (s *QuestionService) Publish(payloads []models.QuestionPayload) (int, error
 		return 0, err
 	}
 	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
 
 	for _, p := range payloads {
-		questionID, err := upsertQuestion(tx, p)
+		questionID, err := qtx.UpsertQuestion(p)
 		if err != nil {
 			return 0, err
 		}
-		if err := upsertTranslations(tx, questionID, p.Translations); err != nil {
+		if err := qtx.UpsertTranslations(questionID, p.Translations); err != nil {
 			return 0, err
 		}
-		if err := relinkTags(tx, questionID, p.Tags, tagIDs); err != nil {
+		if err := qtx.RelinkTags(questionID, p.Tags, tagIDs); err != nil {
 			return 0, err
 		}
-		if err := relinkPosts(tx, questionID, p.PostPaths, postIDs); err != nil {
+		if err := qtx.RelinkPosts(questionID, p.PostPaths, postIDs); err != nil {
 			return 0, err
 		}
 	}
@@ -130,86 +131,4 @@ func dedupe(items []string) []string {
 		}
 	}
 	return out
-}
-
-// upsertQuestion inserts or updates the questions row for one payload,
-// generating a fresh uuid only on first insert (an UPDATE via ON
-// CONFLICT never touches an existing uuid).
-func upsertQuestion(tx *sql.Tx, p models.QuestionPayload) (int, error) {
-	var existingID sql.NullInt64
-	if err := tx.QueryRow("SELECT id FROM questions WHERE slug = ?", p.Slug).Scan(&existingID); err != nil && err != sql.ErrNoRows {
-		return 0, err
-	}
-
-	answerKey := string(p.AnswerKey)
-	if existingID.Valid {
-		if _, err := tx.Exec(
-			`UPDATE questions SET type = ?, difficulty = ?, answer_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			p.Type, p.Difficulty, answerKey, existingID.Int64,
-		); err != nil {
-			return 0, err
-		}
-		return int(existingID.Int64), nil
-	}
-
-	uuid, err := idgen.NewV4()
-	if err != nil {
-		return 0, err
-	}
-	result, err := tx.Exec(
-		`INSERT INTO questions (uuid, slug, type, difficulty, answer_key) VALUES (?, ?, ?, ?, ?)`,
-		uuid, p.Slug, p.Type, p.Difficulty, answerKey,
-	)
-	if err != nil {
-		return 0, err
-	}
-	id, err := result.LastInsertId()
-	return int(id), err
-}
-
-func upsertTranslations(tx *sql.Tx, questionID int, translations map[string]models.QuestionTranslationPayload) error {
-	for lang, t := range translations {
-		if _, err := tx.Exec(
-			`INSERT INTO question_translations (question_id, lang, prompt, content) VALUES (?, ?, ?, ?)
-			 ON CONFLICT(question_id, lang) DO UPDATE SET prompt = excluded.prompt, content = excluded.content`,
-			questionID, lang, t.Prompt, string(t.Content),
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// relinkTags/relinkPosts delete-then-reinsert this one question's own
-// pivot rows only (scoped by question_id) — safe and cheap since these
-// tables have no ownership ambiguity: a question_posts row belongs
-// unambiguously to the question_id it names.
-func relinkTags(tx *sql.Tx, questionID int, slugs []string, tagIDs map[string]int) error {
-	if _, err := tx.Exec("DELETE FROM question_tags WHERE question_id = ?", questionID); err != nil {
-		return err
-	}
-	for _, slug := range slugs {
-		if _, err := tx.Exec(
-			"INSERT INTO question_tags (question_id, tag_id) VALUES (?, ?)",
-			questionID, tagIDs[slug],
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func relinkPosts(tx *sql.Tx, questionID int, paths []string, postIDs map[string]int) error {
-	if _, err := tx.Exec("DELETE FROM question_posts WHERE question_id = ?", questionID); err != nil {
-		return err
-	}
-	for _, path := range paths {
-		if _, err := tx.Exec(
-			"INSERT INTO question_posts (question_id, post_id) VALUES (?, ?)",
-			questionID, postIDs[path],
-		); err != nil {
-			return err
-		}
-	}
-	return nil
 }
