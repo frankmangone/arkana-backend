@@ -1,12 +1,12 @@
 package services
 
 import (
+	"arkana/features/quizzes/models"
+	"arkana/features/quizzes/queries"
+	"arkana/shared/idgen"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
-
-	"arkana/shared/idgen"
 )
 
 // questionsPerAttempt and passThreshold are deliberate implementation
@@ -39,11 +39,12 @@ type attemptRow struct {
 }
 
 type QuizSessionService struct {
-	db *sql.DB
+	db      *sql.DB
+	queries queries.QuizSessionQueries
 }
 
 func NewQuizSessionService(db *sql.DB) *QuizSessionService {
-	return &QuizSessionService{db: db}
+	return &QuizSessionService{db: db, queries: queries.NewSQLQuizSessionQueries(db)}
 }
 
 // CanAttempt is a monetization gating stub (quiz_spec.md requirement
@@ -68,18 +69,12 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 
 	// Resume before the CanAttempt gate - finishing an attempt already
 	// started must never be blocked by a future attempt-count limit.
-	var existingID int
-	var existingUUID string
-	err = s.db.QueryRow(`
-		SELECT id, uuid FROM quiz_attempts
-		WHERE user_id = ? AND module_id = ? AND completed_at IS NULL
-		ORDER BY id DESC LIMIT 1
-	`, userID, moduleID).Scan(&existingID, &existingUUID)
+	existingID, existingUUID, err := s.queries.FindActiveAttempt(userID, moduleID)
 	if err != nil && err != sql.ErrNoRows {
 		return "", 0, err
 	}
 	if err == nil {
-		total, err := s.totalQuestions(existingID)
+		total, err := s.queries.TotalQuestions(existingID)
 		if err != nil {
 			return "", 0, err
 		}
@@ -92,21 +87,21 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 		return "", 0, errors.New("attempt not allowed")
 	}
 
-	pool, err := s.questionPool(moduleID)
+	pool, err := s.queries.QuestionPool(moduleID)
 	if err != nil {
 		return "", 0, err
 	}
 
 	selector := NewWeightedRandomSelector()
-	var history []AnsweredQuestion
-	var chosen []Question
+	var history []models.AnsweredQuestion
+	var chosen []models.Question
 	for {
 		q, done := selector.Next(pool, history)
 		if done {
 			break
 		}
 		chosen = append(chosen, *q)
-		history = append(history, AnsweredQuestion{QuestionID: q.ID})
+		history = append(history, models.AnsweredQuestion{QuestionID: q.ID})
 	}
 
 	uuid, err := idgen.NewV4()
@@ -119,20 +114,14 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 		return "", 0, err
 	}
 	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
 
-	result, err := tx.Exec(`INSERT INTO quiz_attempts (uuid, module_id, user_id) VALUES (?, ?, ?)`, uuid, moduleID, userID)
-	if err != nil {
-		return "", 0, err
-	}
-	attemptID, err := result.LastInsertId()
+	attemptID, err := qtx.InsertAttempt(uuid, moduleID, userID)
 	if err != nil {
 		return "", 0, err
 	}
 	for position, q := range chosen {
-		if _, err := tx.Exec(
-			`INSERT INTO quiz_attempt_questions (attempt_id, question_id, position) VALUES (?, ?, ?)`,
-			attemptID, q.ID, position,
-		); err != nil {
+		if err := qtx.InsertAttemptQuestion(attemptID, q.ID, position); err != nil {
 			return "", 0, err
 		}
 	}
@@ -147,12 +136,7 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 // listSlug/moduleSlug pair, shared by Start and Availability so there's
 // exactly one place that translates "not found" into ErrModuleNotFound.
 func (s *QuizSessionService) resolveModuleID(listSlug, moduleSlug string) (int, error) {
-	var moduleID int
-	err := s.db.QueryRow(`
-		SELECT rlm.id FROM reading_list_modules rlm
-		JOIN reading_lists rl ON rl.id = rlm.reading_list_id
-		WHERE rl.slug = ? AND rlm.slug = ?
-	`, listSlug, moduleSlug).Scan(&moduleID)
+	moduleID, err := s.queries.ResolveModuleID(listSlug, moduleSlug)
 	if err == sql.ErrNoRows {
 		return 0, ErrModuleNotFound
 	}
@@ -176,7 +160,7 @@ func (s *QuizSessionService) Availability(listSlug, moduleSlug string) (availabl
 		return false, nil, err
 	}
 
-	pool, err := s.questionPool(moduleID)
+	pool, err := s.queries.QuestionPool(moduleID)
 	if err != nil {
 		return false, nil, err
 	}
@@ -184,64 +168,16 @@ func (s *QuizSessionService) Availability(listSlug, moduleSlug string) (availabl
 		return false, []string{}, nil
 	}
 
-	ids := make([]any, len(pool))
-	placeholders := make([]string, len(pool))
+	ids := make([]int, len(pool))
 	for i, q := range pool {
 		ids[i] = q.ID
-		placeholders[i] = "?"
 	}
 
-	query := `
-		SELECT lang FROM question_translations
-		WHERE question_id IN (` + strings.Join(placeholders, ",") + `)
-		GROUP BY lang
-		HAVING COUNT(DISTINCT question_id) = ?
-	`
-	rows, err := s.db.Query(query, append(ids, len(pool))...)
+	languages, err = s.queries.LanguagesWithFullCoverage(ids)
 	if err != nil {
 		return false, nil, err
 	}
-	defer rows.Close()
-
-	languages = []string{}
-	for rows.Next() {
-		var lang string
-		if err := rows.Scan(&lang); err != nil {
-			return false, nil, err
-		}
-		languages = append(languages, lang)
-	}
-	return true, languages, rows.Err()
-}
-
-// questionPool assembles every question linked (via question_posts) to a
-// post referenced by any item in this module - the "quiz" for a module is
-// this query, not a stored entity.
-func (s *QuizSessionService) questionPool(moduleID int) ([]Question, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT q.id, q.uuid, q.type, q.difficulty, q.answer_key
-		FROM questions q
-		JOIN question_posts qp ON qp.question_id = q.id
-		JOIN posts p ON p.id = qp.post_id
-		JOIN reading_list_items rli ON rli.post_path = p.path_identifier
-		WHERE rli.module_id = ?
-	`, moduleID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var pool []Question
-	for rows.Next() {
-		var q Question
-		var answerKey string
-		if err := rows.Scan(&q.ID, &q.UUID, &q.Type, &q.Difficulty, &answerKey); err != nil {
-			return nil, err
-		}
-		q.AnswerKey = json.RawMessage(answerKey)
-		pool = append(pool, q)
-	}
-	return pool, rows.Err()
+	return true, languages, nil
 }
 
 // getOwnedAttempt loads a quiz_attempts row by its public uuid and
@@ -250,12 +186,7 @@ func (s *QuizSessionService) questionPool(moduleID int) ([]Question, error) {
 // substitute for this check. Tasks 6-7 (Answer/Complete) call this same
 // helper.
 func (s *QuizSessionService) getOwnedAttempt(userID int, attemptUUID string) (*attemptRow, error) {
-	var row attemptRow
-	var ownerID int
-	err := s.db.QueryRow(
-		"SELECT id, user_id, completed_at FROM quiz_attempts WHERE uuid = ?",
-		attemptUUID,
-	).Scan(&row.ID, &ownerID, &row.CompletedAt)
+	attemptID, ownerID, completedAt, err := s.queries.GetAttemptByUUID(attemptUUID)
 	if err == sql.ErrNoRows {
 		return nil, ErrAttemptNotFound
 	}
@@ -265,19 +196,7 @@ func (s *QuizSessionService) getOwnedAttempt(userID int, attemptUUID string) (*a
 	if ownerID != userID {
 		return nil, ErrAttemptForbidden
 	}
-	return &row, nil
-}
-
-func (s *QuizSessionService) totalQuestions(attemptID int) (int, error) {
-	var total int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM quiz_attempt_questions WHERE attempt_id = ?", attemptID).Scan(&total)
-	return total, err
-}
-
-func (s *QuizSessionService) answeredCount(attemptID int) (int, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM quiz_attempt_answers WHERE attempt_id = ?", attemptID).Scan(&count)
-	return count, err
+	return &attemptRow{ID: attemptID, CompletedAt: completedAt}, nil
 }
 
 // Next returns the question at the attempt's current position (however
@@ -294,11 +213,11 @@ func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (questio
 		return nil, 0, 0, false, ErrAttemptCompleted
 	}
 
-	total, err = s.totalQuestions(attempt.ID)
+	total, err = s.queries.TotalQuestions(attempt.ID)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
-	answered, err := s.answeredCount(attempt.ID)
+	answered, err := s.queries.AnsweredCount(attempt.ID)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
@@ -306,11 +225,8 @@ func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (questio
 		return nil, answered, total, true, nil
 	}
 
-	var questionID int
-	if err := s.db.QueryRow(
-		"SELECT question_id FROM quiz_attempt_questions WHERE attempt_id = ? AND position = ?",
-		attempt.ID, answered,
-	).Scan(&questionID); err != nil {
+	questionID, err := s.queries.QuestionIDAtPosition(attempt.ID, answered)
+	if err != nil {
 		return nil, 0, 0, false, err
 	}
 
@@ -322,14 +238,7 @@ func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (questio
 }
 
 func (s *QuizSessionService) loadQuestionDelivery(questionID int, lang string) (*QuestionDelivery, error) {
-	var q QuestionDelivery
-	var content string
-	err := s.db.QueryRow(`
-		SELECT q.uuid, q.type, q.difficulty, qt.prompt, qt.content
-		FROM questions q
-		JOIN question_translations qt ON qt.question_id = q.id
-		WHERE q.id = ? AND qt.lang = ?
-	`, questionID, lang).Scan(&q.UUID, &q.Type, &q.Difficulty, &q.Prompt, &content)
+	uuid, qType, prompt, content, difficulty, err := s.queries.LoadQuestionDelivery(questionID, lang)
 	if err != nil {
 		return nil, err
 	}
@@ -337,8 +246,7 @@ func (s *QuizSessionService) loadQuestionDelivery(questionID int, lang string) (
 	if err != nil {
 		return nil, err
 	}
-	q.Content = stripped
-	return &q, nil
+	return &QuestionDelivery{UUID: uuid, Type: qType, Difficulty: difficulty, Prompt: prompt, Content: stripped}, nil
 }
 
 // stripExplanation removes the top-level "explanation" key (if present)
@@ -386,11 +294,11 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 		return nil, ErrAttemptCompleted
 	}
 
-	answered, err := s.answeredCount(attempt.ID)
+	answered, err := s.queries.AnsweredCount(attempt.ID)
 	if err != nil {
 		return nil, err
 	}
-	total, err := s.totalQuestions(attempt.ID)
+	total, err := s.queries.TotalQuestions(attempt.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -398,14 +306,8 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 		return nil, ErrAttemptCompleted
 	}
 
-	var questionID int
-	var questionUUIDAtPosition, qType, answerKey string
-	if err := s.db.QueryRow(`
-		SELECT q.id, q.uuid, q.type, q.answer_key
-		FROM quiz_attempt_questions qaq
-		JOIN questions q ON q.id = qaq.question_id
-		WHERE qaq.attempt_id = ? AND qaq.position = ?
-	`, attempt.ID, answered).Scan(&questionID, &questionUUIDAtPosition, &qType, &answerKey); err != nil {
+	questionID, questionUUIDAtPosition, qType, answerKey, err := s.queries.QuestionAtPosition(attempt.ID, answered)
+	if err != nil {
 		return nil, err
 	}
 	if questionUUIDAtPosition != questionUUID {
@@ -433,10 +335,7 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 		}
 	}
 
-	if _, err := s.db.Exec(
-		`INSERT INTO quiz_attempt_answers (attempt_id, question_id, response, correct, skipped) VALUES (?, ?, ?, ?, ?)`,
-		attempt.ID, questionID, string(responseToStore), correct, skipped,
-	); err != nil {
+	if err := s.queries.InsertAnswer(attempt.ID, questionID, string(responseToStore), correct, skipped); err != nil {
 		return nil, err
 	}
 
@@ -458,11 +357,8 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 // question_posts (no "primary" post - reinforcement surfaces all of
 // them).
 func (s *QuizSessionService) reinforcement(questionID int, lang string) (explanation *string, postPaths []string, err error) {
-	var content string
-	if err := s.db.QueryRow(
-		"SELECT content FROM question_translations WHERE question_id = ? AND lang = ?",
-		questionID, lang,
-	).Scan(&content); err != nil {
+	content, err := s.queries.ReinforcementContent(questionID, lang)
+	if err != nil {
 		return nil, nil, err
 	}
 	var parsed struct {
@@ -472,24 +368,11 @@ func (s *QuizSessionService) reinforcement(questionID int, lang string) (explana
 		return nil, nil, err
 	}
 
-	rows, err := s.db.Query(`
-		SELECT p.path_identifier
-		FROM question_posts qp
-		JOIN posts p ON p.id = qp.post_id
-		WHERE qp.question_id = ?
-	`, questionID)
+	postPaths, err = s.queries.ReinforcementPostPaths(questionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			return nil, nil, err
-		}
-		postPaths = append(postPaths, path)
-	}
-	return parsed.Explanation, postPaths, rows.Err()
+	return parsed.Explanation, postPaths, nil
 }
 
 type CompleteResult struct {
@@ -517,11 +400,11 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 		return nil, ErrAttemptCompleted
 	}
 
-	total, err := s.totalQuestions(attempt.ID)
+	total, err := s.queries.TotalQuestions(attempt.ID)
 	if err != nil {
 		return nil, err
 	}
-	answered, err := s.answeredCount(attempt.ID)
+	answered, err := s.queries.AnsweredCount(attempt.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -529,11 +412,8 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 		return nil, ErrAttemptIncomplete
 	}
 
-	var correctCount int
-	if err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM quiz_attempt_answers WHERE attempt_id = ? AND correct = 1",
-		attempt.ID,
-	).Scan(&correctCount); err != nil {
+	correctCount, err := s.queries.CountCorrectAnswers(attempt.ID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -544,46 +424,14 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 		passed = float64(correctCount)/float64(total) >= passThreshold
 	}
 
-	if _, err := s.db.Exec(
-		"UPDATE quiz_attempts SET completed_at = CURRENT_TIMESTAMP, score = ?, passed = ? WHERE id = ?",
-		score, passed, attempt.ID,
-	); err != nil {
+	if err := s.queries.MarkAttemptCompleted(attempt.ID, score, passed); err != nil {
 		return nil, err
 	}
 
-	reviewPaths, err := s.reviewPostPaths(attempt.ID)
+	reviewPaths, err := s.queries.ReviewPostPaths(attempt.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	return &CompleteResult{Score: score, Passed: passed, ReviewPostPaths: reviewPaths}, nil
-}
-
-// reviewPostPaths aggregates the reinforcement posts of every missed
-// (wrong or skipped) answer in an attempt, deduped, ordered by when the
-// miss happened.
-func (s *QuizSessionService) reviewPostPaths(attemptID int) ([]string, error) {
-	rows, err := s.db.Query(`
-		SELECT p.path_identifier
-		FROM quiz_attempt_answers qaa
-		JOIN question_posts qp ON qp.question_id = qaa.question_id
-		JOIN posts p ON p.id = qp.post_id
-		WHERE qaa.attempt_id = ? AND qaa.correct = 0
-		GROUP BY p.path_identifier
-		ORDER BY MIN(qaa.id)
-	`, attemptID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	paths := []string{}
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			return nil, err
-		}
-		paths = append(paths, path)
-	}
-	return paths, rows.Err()
 }
