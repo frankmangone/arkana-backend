@@ -1,6 +1,7 @@
 package services
 
 import (
+	"arkana/features/posts/queries"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -38,13 +39,14 @@ type PublishInput struct {
 // existing PostService rather than duplicating posts-row logic.
 type AdminPostService struct {
 	db      *sql.DB
+	queries queries.AdminPostQueries
 	posts   *PostService
 	indexer PostIndexer
 	tags    TagChecker
 }
 
 func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer, tags TagChecker) *AdminPostService {
-	return &AdminPostService{db: db, posts: posts, indexer: indexer, tags: tags}
+	return &AdminPostService{db: db, queries: queries.NewSQLAdminPostQueries(db), posts: posts, indexer: indexer, tags: tags}
 }
 
 // Publish parses RawContent's frontmatter for title/thumbnail/description/tags,
@@ -87,16 +89,7 @@ func (s *AdminPostService) Publish(input PublishInput) error {
 		thumbnailCol = sql.NullString{String: thumbnail, Valid: true}
 	}
 
-	_, err = s.db.Exec(
-		`INSERT INTO post_contents (post_id, lang, path, content, title, thumbnail, visible)
-		 VALUES (?, ?, ?, ?, ?, ?, 1)
-		 ON CONFLICT (lang, path) DO UPDATE SET
-		   post_id = excluded.post_id, content = excluded.content,
-		   title = excluded.title, thumbnail = excluded.thumbnail,
-		   visible = excluded.visible, updated_at = CURRENT_TIMESTAMP`,
-		post.ID, input.Lang, contentPath, input.RawContent, titleCol, thumbnailCol,
-	)
-	if err != nil {
+	if err := s.queries.UpsertPostContent(post.ID, input.Lang, contentPath, input.RawContent, titleCol, thumbnailCol); err != nil {
 		return err
 	}
 
