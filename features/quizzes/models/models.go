@@ -74,3 +74,19 @@ type CompleteAttemptResponse struct {
 	Passed          bool     `json:"passed"`
 	ReviewPostPaths []string `json:"reviewPostPaths"`
 }
+
+// Question is the internal domain representation shared by the selector
+// and QuizSessionService - distinct from QuestionDTO (the public wire
+// shape).
+type Question struct {
+	ID         int
+	UUID       string
+	Type       string
+	Difficulty int
+	AnswerKey  json.RawMessage
+}
+
+type AnsweredQuestion struct {
+	QuestionID int
+	Correct    bool
+}

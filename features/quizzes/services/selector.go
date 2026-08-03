@@ -1,26 +1,10 @@
 package services
 
 import (
-	"encoding/json"
 	"math/rand"
+
+	"arkana/features/quizzes/models"
 )
-
-// Question is the internal domain representation shared by the selector
-// and QuizSessionService - distinct from models.QuestionDTO (the public
-// wire shape), same "response mirrors payload but stays its own type"
-// rationale used throughout this codebase's Payload/Response splits.
-type Question struct {
-	ID         int
-	UUID       string
-	Type       string
-	Difficulty int
-	AnswerKey  json.RawMessage
-}
-
-type AnsweredQuestion struct {
-	QuestionID int
-	Correct    bool
-}
 
 // QuestionSelector picks the next question to serve given the full pool
 // and the answer history so far. WeightedRandomSelector ignores
@@ -31,7 +15,7 @@ type AnsweredQuestion struct {
 // calls (persistence into quiz_attempt_questions is what provides
 // consistency across the life of an attempt, not the selector itself).
 type QuestionSelector interface {
-	Next(pool []Question, history []AnsweredQuestion) (question *Question, done bool)
+	Next(pool []models.Question, history []models.AnsweredQuestion) (question *models.Question, done bool)
 }
 
 type WeightedRandomSelector struct{}
@@ -40,7 +24,7 @@ func NewWeightedRandomSelector() *WeightedRandomSelector {
 	return &WeightedRandomSelector{}
 }
 
-func (s *WeightedRandomSelector) Next(pool []Question, history []AnsweredQuestion) (*Question, bool) {
+func (s *WeightedRandomSelector) Next(pool []models.Question, history []models.AnsweredQuestion) (*models.Question, bool) {
 	limit := questionsPerAttempt
 	if limit > len(pool) {
 		limit = len(pool)
@@ -53,7 +37,7 @@ func (s *WeightedRandomSelector) Next(pool []Question, history []AnsweredQuestio
 	for _, h := range history {
 		answered[h.QuestionID] = true
 	}
-	var remaining []Question
+	var remaining []models.Question
 	for _, q := range pool {
 		if !answered[q.ID] {
 			remaining = append(remaining, q)

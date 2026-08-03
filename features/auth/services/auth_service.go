@@ -3,6 +3,7 @@ package services
 import (
 	"arkana/config"
 	"arkana/features/auth/models"
+	"arkana/features/auth/queries"
 	"database/sql"
 	"errors"
 	"log"
@@ -11,98 +12,24 @@ import (
 
 // AuthService handles authentication business logic
 type AuthService struct {
-	db  *sql.DB
-	cfg *config.Config
+	db      *sql.DB
+	cfg     *config.Config
+	queries queries.AuthQueries
 }
 
 // NewAuthService creates a new auth service
 func NewAuthService(db *sql.DB, cfg *config.Config) *AuthService {
-	return &AuthService{db: db, cfg: cfg}
+	return &AuthService{db: db, cfg: cfg, queries: queries.NewSQLAuthQueries(db)}
 }
 
 // GetByID retrieves a user by ID
 func (s *AuthService) GetByID(id int) (*models.User, error) {
-	user := &models.User{}
-	var username, avatarURL, walletAddress, walletSystem sql.NullString
-	var updatedAt sql.NullTime
-
-	err := s.db.QueryRow(`
-		SELECT id, email, username, avatar_url, auth_provider, provider_user_id,
-		       email_verified, wallet_address, wallet_system, created_at, updated_at
-		FROM users WHERE id = ?
-	`, id).Scan(
-		&user.ID, &user.Email, &username, &avatarURL,
-		&user.AuthProvider, &user.ProviderUserID, &user.EmailVerified,
-		&walletAddress, &walletSystem, &user.CreatedAt, &updatedAt,
-	)
-
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	if username.Valid {
-		user.Username = &username.String
-	}
-	if avatarURL.Valid {
-		user.AvatarURL = &avatarURL.String
-	}
-	if walletAddress.Valid {
-		user.WalletAddress = &walletAddress.String
-	}
-	if walletSystem.Valid {
-		user.WalletSystem = &walletSystem.String
-	}
-	if updatedAt.Valid {
-		user.UpdatedAt = &updatedAt.Time
-	}
-
-	return user, nil
+	return s.queries.GetByID(id)
 }
 
 // GetUserByProviderID retrieves a user by OIDC provider and provider user ID
 func (s *AuthService) GetUserByProviderID(provider, providerUserID string) (*models.User, error) {
-	user := &models.User{}
-	var username, avatarURL, walletAddress, walletSystem sql.NullString
-	var updatedAt sql.NullTime
-
-	err := s.db.QueryRow(`
-		SELECT id, email, username, avatar_url, auth_provider, provider_user_id,
-		       email_verified, wallet_address, wallet_system, created_at, updated_at
-		FROM users
-		WHERE auth_provider = ? AND provider_user_id = ?
-	`, provider, providerUserID).Scan(
-		&user.ID, &user.Email, &username, &avatarURL,
-		&user.AuthProvider, &user.ProviderUserID, &user.EmailVerified,
-		&walletAddress, &walletSystem, &user.CreatedAt, &updatedAt,
-	)
-
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	if username.Valid {
-		user.Username = &username.String
-	}
-	if avatarURL.Valid {
-		user.AvatarURL = &avatarURL.String
-	}
-	if walletAddress.Valid {
-		user.WalletAddress = &walletAddress.String
-	}
-	if walletSystem.Valid {
-		user.WalletSystem = &walletSystem.String
-	}
-	if updatedAt.Valid {
-		user.UpdatedAt = &updatedAt.Time
-	}
-
-	return user, nil
+	return s.queries.GetUserByProviderID(provider, providerUserID)
 }
 
 // CreateOIDCUser creates a new user from OIDC authentication
@@ -116,15 +43,7 @@ func (s *AuthService) CreateOIDCUser(email, username, provider, providerUserID, 
 		usernamePtr = &username
 	}
 
-	result, err := s.db.Exec(`
-		INSERT INTO users (email, username, auth_provider, provider_user_id, avatar_url, email_verified)
-		VALUES (?, ?, ?, ?, ?, 1)
-	`, email, usernamePtr, provider, providerUserID, avatarPtr)
-	if err != nil {
-		return nil, err
-	}
-
-	id, err := result.LastInsertId()
+	id, err := s.queries.CreateUser(email, usernamePtr, provider, providerUserID, avatarPtr)
 	if err != nil {
 		return nil, err
 	}
@@ -143,8 +62,7 @@ func (s *AuthService) FindOrCreateGoogleUser(googleUserInfo *GoogleUserInfo) (*m
 
 	if user != nil {
 		log.Printf("[AuthService] Found existing user ID=%d", user.ID)
-		_, err = s.db.Exec(`UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, user.ID)
-		if err != nil {
+		if err := s.queries.TouchUser(user.ID); err != nil {
 			return nil, err
 		}
 		return user, nil
@@ -187,11 +105,7 @@ func (s *AuthService) GenerateTokensForUser(user *models.User) (accessToken, ref
 
 	tokenHash := HashToken(refreshToken)
 	expiresAt := time.Now().Add(s.cfg.JWTRefreshExpiry)
-	_, err = s.db.Exec(`
-		INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-		VALUES (?, ?, ?)
-	`, user.ID, tokenHash, expiresAt)
-	if err != nil {
+	if err := s.queries.InsertRefreshToken(user.ID, tokenHash, expiresAt); err != nil {
 		return "", "", err
 	}
 
@@ -202,16 +116,7 @@ func (s *AuthService) GenerateTokensForUser(user *models.User) (accessToken, ref
 func (s *AuthService) RefreshAccessToken(refreshToken string) (string, error) {
 	tokenHash := HashToken(refreshToken)
 
-	var userID int
-	var expiresAt time.Time
-	var revokedAt sql.NullTime
-
-	err := s.db.QueryRow(`
-		SELECT user_id, expires_at, revoked_at
-		FROM refresh_tokens
-		WHERE token_hash = ?
-	`, tokenHash).Scan(&userID, &expiresAt, &revokedAt)
-
+	userID, expiresAt, revokedAt, err := s.queries.GetRefreshToken(tokenHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", errors.New("invalid refresh token")
@@ -242,16 +147,7 @@ func (s *AuthService) RefreshAccessToken(refreshToken string) (string, error) {
 func (s *AuthService) RevokeRefreshToken(refreshToken string) error {
 	tokenHash := HashToken(refreshToken)
 
-	result, err := s.db.Exec(`
-		UPDATE refresh_tokens
-		SET revoked_at = CURRENT_TIMESTAMP
-		WHERE token_hash = ? AND revoked_at IS NULL
-	`, tokenHash)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
+	rowsAffected, err := s.queries.RevokeRefreshToken(tokenHash)
 	if err != nil {
 		return err
 	}
