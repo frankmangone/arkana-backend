@@ -261,4 +261,70 @@ func TestRedisQuizSessionQueriesAttemptLifecycle(t *testing.T) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
+
+	t.Run("GetAttemptMeta (via load) refreshes the paired resume index's TTL, not just the blob's", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		ctx := context.Background()
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+		// Shrink the index key's TTL well below attemptTTL, simulating time
+		// having passed since CreateAttempt.
+		shrunk := 5 * time.Second
+		if err := redisClient.Expire(ctx, "quiz:active-attempt:7:42", shrunk).Err(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, _, err := q.GetAttemptMeta("attempt-1"); err != nil {
+			t.Fatal(err)
+		}
+
+		indexTTL, err := redisClient.TTL(ctx, "quiz:active-attempt:7:42").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if indexTTL <= shrunk {
+			t.Fatalf("index TTL = %v, want it restored above the shrunk %v", indexTTL, shrunk)
+		}
+	})
+
+	t.Run("FindActiveAttemptUUID refreshes both the index's and the blob's TTL", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		ctx := context.Background()
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+		shrunk := 5 * time.Second
+		if err := redisClient.Expire(ctx, "quiz:active-attempt:7:42", shrunk).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := redisClient.Expire(ctx, "quiz:attempt:attempt-1", shrunk).Err(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := q.FindActiveAttemptUUID(7, 42); err != nil {
+			t.Fatal(err)
+		}
+
+		indexTTL, err := redisClient.TTL(ctx, "quiz:active-attempt:7:42").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if indexTTL <= shrunk {
+			t.Fatalf("index TTL = %v, want it restored above the shrunk %v", indexTTL, shrunk)
+		}
+		attemptTTLResult, err := redisClient.TTL(ctx, "quiz:attempt:attempt-1").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attemptTTLResult <= shrunk {
+			t.Fatalf("attempt TTL = %v, want it restored above the shrunk %v", attemptTTLResult, shrunk)
+		}
+	})
 }

@@ -105,9 +105,10 @@ type redisAnswer struct {
 	AnsweredAt time.Time `json:"answered_at"`
 }
 
-// load fetches and decodes an attempt blob, sliding its TTL forward - read
-// paths advance the TTL exactly like write paths do, per this feature's
-// TTL policy.
+// load fetches and decodes an attempt blob, sliding both its own TTL and
+// its paired resume index's TTL forward - read paths advance the TTL
+// exactly like write paths do, per this feature's TTL policy (both keys
+// always carry the same TTL, refreshed uniformly on reads and writes).
 func (q *RedisQuizSessionQueries) load(attemptUUID string) (*redisAttempt, error) {
 	ctx := context.Background()
 	data, err := q.redisClient.Get(ctx, attemptKey(attemptUUID)).Bytes()
@@ -122,7 +123,11 @@ func (q *RedisQuizSessionQueries) load(attemptUUID string) (*redisAttempt, error
 	if err := json.Unmarshal(data, &attempt); err != nil {
 		return nil, err
 	}
-	if err := q.redisClient.Expire(ctx, attemptKey(attemptUUID), attemptTTL).Err(); err != nil {
+
+	pipe := q.redisClient.TxPipeline()
+	pipe.Expire(ctx, attemptKey(attemptUUID), attemptTTL)
+	pipe.Expire(ctx, activeAttemptKey(attempt.UserID, attempt.ModuleID), attemptTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, err
 	}
 	return &attempt, nil
@@ -169,7 +174,9 @@ func (q *RedisQuizSessionQueries) CreateAttempt(uuid string, moduleID, userID in
 // It defensively confirms the attempt blob itself still exists before
 // trusting the index - guards the rare case where the index outlives the
 // blob by a beat; if the blob is gone, this is treated as "no active
-// attempt" so Start begins a fresh one instead of resuming a ghost.
+// attempt" so Start begins a fresh one instead of resuming a ghost. Once
+// confirmed live, both keys' TTLs are refreshed - this is a read path too,
+// so it slides the TTL forward exactly like load does.
 func (q *RedisQuizSessionQueries) FindActiveAttemptUUID(userID, moduleID int) (string, error) {
 	ctx := context.Background()
 	uuid, err := q.redisClient.Get(ctx, activeAttemptKey(userID, moduleID)).Result()
@@ -186,6 +193,13 @@ func (q *RedisQuizSessionQueries) FindActiveAttemptUUID(userID, moduleID int) (s
 	}
 	if exists == 0 {
 		return "", ErrNotFound
+	}
+
+	pipe := q.redisClient.TxPipeline()
+	pipe.Expire(ctx, activeAttemptKey(userID, moduleID), attemptTTL)
+	pipe.Expire(ctx, attemptKey(uuid), attemptTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return "", err
 	}
 	return uuid, nil
 }
