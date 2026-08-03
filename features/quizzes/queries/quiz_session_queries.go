@@ -303,7 +303,14 @@ func (q *RedisQuizSessionQueries) CountCorrectAnswers(attemptUUID string) (int, 
 	return count, nil
 }
 
-// MarkAttemptCompleted finalizes an attempt's score.
+// MarkAttemptCompleted finalizes an attempt's score, and removes its resume
+// index so it's never handed back by FindActiveAttemptUUID - mirroring the
+// original SQL implementation's `WHERE completed_at IS NULL` filter, which
+// otherwise has no Redis equivalent (FindActiveAttemptUUID only checks that
+// the blob still exists, not whether it's completed). The attempt blob
+// itself is left alone here - it still just expires normally via TTL, since
+// only the "is there an active attempt" pointer needs to disappear
+// immediately.
 func (q *RedisQuizSessionQueries) MarkAttemptCompleted(attemptUUID string, score int, passed bool) error {
 	attempt, err := q.load(attemptUUID)
 	if err != nil {
@@ -313,7 +320,10 @@ func (q *RedisQuizSessionQueries) MarkAttemptCompleted(attemptUUID string, score
 	attempt.CompletedAt = &now
 	attempt.Score = &score
 	attempt.Passed = &passed
-	return q.save(attempt)
+	if err := q.save(attempt); err != nil {
+		return err
+	}
+	return q.redisClient.Del(context.Background(), activeAttemptKey(attempt.UserID, attempt.ModuleID)).Err()
 }
 
 // ReviewPostPaths aggregates the reinforcement posts of every missed

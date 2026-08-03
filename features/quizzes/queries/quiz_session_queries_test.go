@@ -526,6 +526,24 @@ func TestRedisQuizSessionQueriesAnswerAndComplete(t *testing.T) {
 		}
 	})
 
+	t.Run("MarkAttemptCompleted removes the resume index so a completed attempt is never resumed", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := q.MarkAttemptCompleted("attempt-1", 100, true); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := q.FindActiveAttemptUUID(7, 42)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound (a completed attempt must not be resumable)", err)
+		}
+	})
+
 	t.Run("ReviewPostPaths aggregates missed questions' posts, deduped, in miss order", func(t *testing.T) {
 		db := setupTestDB(t)
 		redisClient := setupTestRedis(t)
