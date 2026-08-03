@@ -5,7 +5,6 @@ import (
 	"arkana/features/readinglists/models"
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 type ReadingListQueries interface {
@@ -61,16 +60,9 @@ func (q *SQLReadingListQueries) DeleteAllTranslations(listID int64) error {
 
 // DeleteTranslationsNotIn removes translation rows whose lang isn't in langs.
 func (q *SQLReadingListQueries) DeleteTranslationsNotIn(listID int64, langs []string) error {
-	placeholders := strings.Repeat("?,", len(langs))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]interface{}, len(langs)+1)
-	args[0] = listID
-	for i, lang := range langs {
-		args[i+1] = lang
-	}
 	_, err := q.db.Exec(
-		fmt.Sprintf(`DELETE FROM reading_list_translations WHERE reading_list_id = ? AND lang NOT IN (%s)`, placeholders),
-		args...,
+		fmt.Sprintf(`DELETE FROM reading_list_translations WHERE reading_list_id = ? AND lang NOT IN (%s)`, dbpkg.Placeholders(len(langs))),
+		append([]any{listID}, dbpkg.ToAny(langs)...)...,
 	)
 	return err
 }

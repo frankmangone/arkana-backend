@@ -4,7 +4,6 @@ import (
 	dbpkg "arkana/shared/db"
 	"arkana/features/quizzes/models"
 	"database/sql"
-	"strings"
 )
 
 type QuizSessionQueries interface {
@@ -98,20 +97,13 @@ func (q *SQLQuizSessionQueries) QuestionPool(moduleID int) ([]models.Question, e
 // LanguagesWithFullCoverage returns every lang that has a
 // question_translations row for all of questionIDs.
 func (q *SQLQuizSessionQueries) LanguagesWithFullCoverage(questionIDs []int) ([]string, error) {
-	ids := make([]any, len(questionIDs))
-	placeholders := make([]string, len(questionIDs))
-	for i, id := range questionIDs {
-		ids[i] = id
-		placeholders[i] = "?"
-	}
-
 	query := `
 		SELECT lang FROM question_translations
-		WHERE question_id IN (` + strings.Join(placeholders, ",") + `)
+		WHERE question_id IN (` + dbpkg.Placeholders(len(questionIDs)) + `)
 		GROUP BY lang
 		HAVING COUNT(DISTINCT question_id) = ?
 	`
-	rows, err := q.db.Query(query, append(ids, len(questionIDs))...)
+	rows, err := q.db.Query(query, append(dbpkg.ToAny(questionIDs), len(questionIDs))...)
 	if err != nil {
 		return nil, err
 	}
