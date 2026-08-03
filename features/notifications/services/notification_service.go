@@ -1,3 +1,11 @@
+// Package services implements the business logic for user notifications. Its
+// central type, NotificationService, wraps queries.NotificationQueries to
+// create notifications (e.g. from post/comment activity in the posts
+// feature), list a user's notifications, mark them as read, and report
+// unread counts. It is constructed with NewNotificationService and consumed
+// by the notifications feature's HTTP handlers as well as other features
+// (such as posts) that need to emit notifications as part of their own
+// service logic.
 package services
 
 import (
@@ -15,6 +23,8 @@ type NotificationService struct {
 	queries queries.NotificationQueries
 }
 
+// NewNotificationService creates a NotificationService backed by db, wiring
+// it to the default SQL-based NotificationQueries implementation.
 func NewNotificationService(db *sql.DB) *NotificationService {
 	return &NotificationService{db: db, queries: queries.NewSQLNotificationQueries(db)}
 }

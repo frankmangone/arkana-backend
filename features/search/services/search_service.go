@@ -1,3 +1,10 @@
+// Package services implements the search feature's business logic. Its main
+// type, SearchService, wraps a Meilisearch HTTP client to run full-text
+// search and tag facet-search over per-language "posts_<lang>" indexes and to
+// index individual posts, and it also queries the app's own database (via
+// queries.SearchQueries) to fill in thumbnails that Meilisearch doesn't
+// store. Handlers construct a SearchService with NewSearchService and call
+// its exported methods to serve search requests.
 package services
 
 import (
@@ -27,6 +34,9 @@ type SearchService struct {
 	httpClient *http.Client
 }
 
+// NewSearchService builds a SearchService that talks to the Meilisearch
+// instance at host, authenticating with masterKey, and uses db for
+// thumbnail lookups.
 func NewSearchService(db *sql.DB, host, masterKey string) *SearchService {
 	return &SearchService{
 		db:         db,
@@ -231,9 +241,9 @@ func (s *SearchService) postMeili(url string, payload any, out any) error {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSearchUnavailable, err)
+		return fmt.Errorf("%w: %w", ErrSearchUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read-side close, nothing actionable on failure
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)

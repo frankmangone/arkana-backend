@@ -36,7 +36,7 @@ func (m *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 			httputil.WriteError(w, http.StatusBadRequest, "failed to read request body")
 			return
 		}
-		defer r.Body.Close()
+		defer r.Body.Close() //nolint:errcheck // read-side close, nothing actionable on failure
 
 		envelope, err := services.ParseCompactJWS(string(body))
 		if err != nil {

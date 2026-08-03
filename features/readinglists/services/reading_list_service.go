@@ -1,3 +1,10 @@
+// Package services implements the business logic for reading lists: validating
+// that every item references a real post, and publishing a reading list's full
+// payload (its row, translations, and module/item tree) as one authoritative,
+// transactional replace. Its main type is ReadingListService, which is
+// constructed with a *sql.DB and a PostChecker (satisfied structurally by
+// posts/services.PostService) and used by the reading lists feature's HTTP
+// handlers to serve admin CI pulls and publish updates.
 package services
 
 import (
@@ -25,6 +32,8 @@ type ReadingListService struct {
 	posts   PostChecker
 }
 
+// NewReadingListService builds a ReadingListService backed by db, using posts
+// to validate post paths referenced by published reading lists.
 func NewReadingListService(db *sql.DB, posts PostChecker) *ReadingListService {
 	return &ReadingListService{db: db, queries: queries.NewSQLReadingListQueries(db), posts: posts}
 }

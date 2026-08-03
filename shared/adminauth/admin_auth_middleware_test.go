@@ -4,7 +4,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -113,7 +112,7 @@ func TestAdminAuthMiddleware(t *testing.T) {
 		m := NewAdminAuthMiddleware(secret)
 		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signature := sign(secret, timestamp, body)
-		tamperedBody := fmt.Sprintf(`{"post_id":2}`)
+		tamperedBody := `{"post_id":2}`
 
 		rec := httptest.NewRecorder()
 		next, wasCalled := called()

@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	dbpkg "arkana/shared/db"
 	"arkana/features/tags/models"
+	dbpkg "arkana/shared/db"
 )
 
 type TagQueries interface {

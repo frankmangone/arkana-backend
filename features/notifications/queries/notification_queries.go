@@ -3,8 +3,8 @@ package queries
 import (
 	"database/sql"
 
-	dbpkg "arkana/shared/db"
 	"arkana/features/notifications/models"
+	dbpkg "arkana/shared/db"
 )
 
 type NotificationQueries interface {

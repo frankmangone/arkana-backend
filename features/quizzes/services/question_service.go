@@ -50,6 +50,9 @@ type QuestionService struct {
 	tags    TagChecker
 }
 
+// NewQuestionService constructs a QuestionService backed by db, using posts
+// and tags to validate post paths and tag slugs referenced by published
+// questions.
 func NewQuestionService(db *sql.DB, posts PostChecker, tags TagChecker) *QuestionService {
 	return &QuestionService{db: db, queries: queries.NewSQLQuestionQueries(db), posts: posts, tags: tags}
 }
@@ -119,6 +122,8 @@ func (s *QuestionService) Publish(payloads []models.QuestionPayload) (int, error
 	return len(payloads), nil
 }
 
+// dedupe returns items with duplicates removed, preserving first-occurrence
+// order.
 func dedupe(items []string) []string {
 	seen := make(map[string]bool, len(items))
 	var out []string

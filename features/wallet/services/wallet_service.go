@@ -1,9 +1,15 @@
+// Package services implements the business logic for the wallet feature. Its main
+// type, WalletService, looks up and creates wallets by address, delegating persistence
+// to a queries.WalletQueries implementation backed by *sql.DB. It is constructed via
+// NewWalletService and wired into the wallet feature's handlers and auth middleware by
+// features/wallet.Initialize.
 package services
 
 import (
 	"arkana/features/wallet/models"
 	"arkana/features/wallet/queries"
 	"database/sql"
+	"errors"
 	"strings"
 )
 
@@ -12,6 +18,8 @@ type WalletService struct {
 	queries queries.WalletQueries
 }
 
+// NewWalletService creates a WalletService backed by the given database connection,
+// using the default SQL-backed wallet queries.
 func NewWalletService(db *sql.DB) *WalletService {
 	return &WalletService{db: db, queries: queries.NewSQLWalletQueries(db)}
 }
@@ -24,7 +32,7 @@ func (s *WalletService) GetOrCreate(address, system string) (*models.Wallet, err
 	if err == nil {
 		return wallet, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 

@@ -1,3 +1,9 @@
+// Package services implements the business logic for blog posts. PostService
+// handles reading posts and per-user interactions (likes, read status).
+// CommentService handles commenting on posts. AdminPostService handles
+// admin/CI-driven content publishing (parsing markdown frontmatter, upserting
+// post content, and indexing it for search), composing PostService rather
+// than duplicating its posts-row logic.
 package services
 
 import (
@@ -18,6 +24,8 @@ type PostService struct {
 	notifications *notifservices.NotificationService
 }
 
+// NewPostService constructs a PostService backed by db, using notifications
+// to notify post writers when their posts are liked.
 func NewPostService(db *sql.DB, notifications *notifservices.NotificationService) *PostService {
 	return &PostService{db: db, queries: queries.NewSQLPostQueries(db), notifications: notifications}
 }
@@ -25,7 +33,7 @@ func NewPostService(db *sql.DB, notifications *notifservices.NotificationService
 // GetByPath finds a post by path_identifier.
 func (s *PostService) GetByPath(path string) (*models.Post, error) {
 	p, err := s.queries.GetByPath(path)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPostNotFound
 	}
 	if err != nil {
@@ -40,7 +48,7 @@ func (s *PostService) GetOrCreateByPath(path string) (*models.Post, error) {
 	if err == nil {
 		return p, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 
@@ -88,7 +96,7 @@ func (s *PostService) ToggleLike(postID, userID int) (bool, int, error) {
 			liked = true
 
 			writerUserID, err := qtx.GetPostWriterUserID(postID)
-			if err != nil && err != sql.ErrNoRows {
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			if err == nil && writerUserID.Valid {
@@ -161,7 +169,7 @@ func (s *PostService) GetReadStatuses(paths []string, userID int) (map[string]bo
 // has liked and read it. If userID is 0, liked and read are always false.
 func (s *PostService) GetPostInfo(path string, userID int) (*models.PostInfoResponse, error) {
 	postID, likeCount, err := s.queries.GetPostInfo(path)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPostNotFound
 	}
 	if err != nil {

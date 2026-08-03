@@ -11,5 +11,15 @@ services:
     volumes:
       - meili-data:/meili_data
 
+  redis:
+    image: redis:7-alpine
+    container_name: arkana-redis
+    restart: unless-stopped
+    ports:
+      - "3334:6379"
+    volumes:
+      - redis-data:/data
+
 volumes:
   meili-data:
+  redis-data:

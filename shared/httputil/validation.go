@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,9 +14,9 @@ var validate = validator.New()
 // that is safe to expose to API clients (never the raw go-playground/validator text).
 func ValidateRequest(req interface{}) error {
 	if err := validate.Struct(req); err != nil {
-		validationErrors, ok := err.(validator.ValidationErrors)
-		if !ok {
-			return fmt.Errorf("validation error: %v", err)
+		var validationErrors validator.ValidationErrors
+		if !errors.As(err, &validationErrors) {
+			return fmt.Errorf("validation error: %w", err)
 		}
 
 		var messages []string

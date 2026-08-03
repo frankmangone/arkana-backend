@@ -20,12 +20,15 @@ var templateFS embed.FS
 // never from user input.
 var logoDataURI = mustLogoDataURI()
 
+// mustLogoDataURI reads the embedded logo asset and encodes it as a base64
+// data URI. It panics on failure since a missing embedded file is a
+// build-time packaging error, not a condition callers can recover from.
 func mustLogoDataURI() template.URL {
 	data, err := templateFS.ReadFile("templates/logo.png")
 	if err != nil {
 		panic(err)
 	}
-	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(data))
+	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(data)) //nolint:gosec // bytes come from our own embedded asset, never user input (see logoDataURI doc above)
 }
 
 var templateFuncs = template.FuncMap{
@@ -58,6 +61,8 @@ type BroadcastEmailData struct {
 	UnsubscribeLink string
 }
 
+// render executes tmpl's "layout" definition with data and returns the
+// resulting HTML.
 func render(tmpl *template.Template, data any) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {

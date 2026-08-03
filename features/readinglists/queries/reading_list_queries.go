@@ -1,8 +1,8 @@
 package queries
 
 import (
-	dbpkg "arkana/shared/db"
 	"arkana/features/readinglists/models"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 	"fmt"
 )

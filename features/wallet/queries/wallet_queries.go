@@ -1,8 +1,8 @@
 package queries
 
 import (
-	dbpkg "arkana/shared/db"
 	"arkana/features/wallet/models"
+	dbpkg "arkana/shared/db"
 	"strings"
 )
 

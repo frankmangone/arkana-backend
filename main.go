@@ -32,7 +32,9 @@ func main() {
 	defer db.Close()
 
 	// Run migrations
-	goose.SetDialect("sqlite3")
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		log.Fatal("Failed to set migration dialect:", err)
+	}
 	if err := goose.Up(db, "migrations"); err != nil {
 		log.Fatal("Failed to run migrations:", err)
 	}
@@ -41,8 +43,9 @@ func main() {
 	r := router.Setup(db, cfg)
 
 	srv := &http.Server{
-		Addr:    ":8082",
-		Handler: r,
+		Addr:              ":8082",
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start server in a goroutine

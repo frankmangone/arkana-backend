@@ -1,3 +1,11 @@
+// Package services implements the subscription business logic: guest and
+// authenticated signup, email confirmation, unsubscribe (both the logged-in
+// and token-based one-click paths), status lookups, and broadcasting new-post
+// notifications. The main type is SubscriptionService, constructed via
+// NewSubscriptionService and wired with a *sql.DB, an email.Sender, and the
+// token secret / frontend URL used to sign and build the links embedded in
+// outgoing emails. It persists through queries.SubscriptionQueries and
+// renders outgoing email bodies using the templates in this package.
 package services
 
 import (
@@ -24,6 +32,10 @@ type SubscriptionService struct {
 	frontendURL string
 }
 
+// NewSubscriptionService constructs a SubscriptionService backed by db, using
+// sender to deliver confirmation and broadcast emails, tokenSecret to sign
+// and verify subscription tokens, and frontendURL to build the links
+// embedded in those emails.
 func NewSubscriptionService(db *sql.DB, sender email.Sender, tokenSecret, frontendURL string) *SubscriptionService {
 	return &SubscriptionService{
 		db:          db,
@@ -160,6 +172,8 @@ func (s *SubscriptionService) Broadcast(ctx context.Context, postID int) (sent, 
 	return sent, failed, nil
 }
 
+// sendConfirmEmail generates a confirmation token and link for subscriberID
+// and emails it to to.
 func (s *SubscriptionService) sendConfirmEmail(ctx context.Context, subscriberID int, to string) error {
 	token := GenerateSubscriptionToken(s.tokenSecret, subscriberID, PurposeConfirm)
 	link := fmt.Sprintf("%s/subscribe/confirm?sid=%d&token=%s", s.frontendURL, subscriberID, token)

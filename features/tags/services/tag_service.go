@@ -1,3 +1,8 @@
+// Package services implements the business logic for tags. Its main type,
+// TagService, wraps a queries.TagQueries to sync tags and their translations
+// from a source payload, list all tags, and look up tags by slug - keeping
+// transaction handling and query details out of the HTTP handler layer that
+// wires it into the rest of the app.
 package services
 
 import (
@@ -12,6 +17,8 @@ type TagService struct {
 	queries queries.TagQueries
 }
 
+// NewTagService constructs a TagService backed by db, wiring it to the
+// default SQL-backed TagQueries implementation.
 func NewTagService(db *sql.DB) *TagService {
 	return &TagService{db: db, queries: queries.NewSQLTagQueries(db)}
 }

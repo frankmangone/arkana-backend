@@ -1,3 +1,11 @@
+// Package services implements the business logic for user authentication. Its main
+// type, AuthService, looks up and creates users, and issues/validates/revokes the
+// JWT access and refresh tokens used to authenticate requests (see jwt_service.go
+// for token generation/validation and google_oauth_service.go for GoogleOAuthService,
+// which handles the Google OIDC login flow that AuthService.FindOrCreateGoogleUser
+// consumes). Handlers in features/auth/handlers construct AuthService and
+// GoogleOAuthService and call into them to implement the auth HTTP endpoints, while
+// features/auth/middlewares uses ValidateAccessToken to authenticate incoming requests.
 package services
 
 import (

@@ -17,7 +17,7 @@ const (
 // confirm token can't be replayed as an unsubscribe token or vice versa.
 func GenerateSubscriptionToken(secret string, subscriberID int, purpose string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d.%s", subscriberID, purpose)))
+	fmt.Fprintf(mac, "%d.%s", subscriberID, purpose) //nolint:errcheck // hash.Hash.Write never returns an error
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

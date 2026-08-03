@@ -20,10 +20,18 @@ type QuestionSelector interface {
 
 type WeightedRandomSelector struct{}
 
+// NewWeightedRandomSelector constructs a WeightedRandomSelector.
 func NewWeightedRandomSelector() *WeightedRandomSelector {
 	return &WeightedRandomSelector{}
 }
 
+// Next picks a uniformly random question from pool, excluding any question
+// already present in history, until questionsPerAttempt questions have been
+// chosen (or the pool is exhausted first, whichever limit is lower) - at
+// that point done is true and question is nil. Despite the type name,
+// selection here is plain random, not weighted by difficulty or any other
+// property; "weighted" names where this selector is headed, not what it
+// does today (see the QuestionSelector interface doc).
 func (s *WeightedRandomSelector) Next(pool []models.Question, history []models.AnsweredQuestion) (*models.Question, bool) {
 	limit := questionsPerAttempt
 	if limit > len(pool) {
@@ -47,6 +55,6 @@ func (s *WeightedRandomSelector) Next(pool []models.Question, history []models.A
 		return nil, true
 	}
 
-	q := remaining[rand.Intn(len(remaining))]
+	q := remaining[rand.Intn(len(remaining))] //nolint:gosec // non-cryptographic use: picking a quiz question, not a secret
 	return &q, false
 }

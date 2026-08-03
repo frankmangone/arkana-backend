@@ -49,7 +49,7 @@ type GoogleUserInfo struct {
 // NewGoogleOAuthService creates a new Google OAuth service
 func NewGoogleOAuthService(cfg *config.Config) (*GoogleOAuthService, error) {
 	if cfg.GoogleClientID == "" || cfg.GoogleClientSecret == "" {
-		return nil, errors.New("Google OAuth configuration is incomplete")
+		return nil, errors.New("google OAuth configuration is incomplete")
 	}
 
 	oauthConfig := &oauth2.Config{
@@ -57,7 +57,7 @@ func NewGoogleOAuthService(cfg *config.Config) (*GoogleOAuthService, error) {
 		ClientSecret: cfg.GoogleClientSecret,
 		RedirectURL:  cfg.GoogleRedirectURL,
 		Scopes:       []string{"openid", "email", "profile"},
-		Endpoint: oauth2.Endpoint{
+		Endpoint: oauth2.Endpoint{ //nolint:gosec // these are public OAuth endpoint URLs, not credentials
 			AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
 			TokenURL: "https://oauth2.googleapis.com/token",
 		},
@@ -103,7 +103,7 @@ func (s *GoogleOAuthService) ExchangeCodeForTokens(ctx context.Context, code str
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read-side close, nothing actionable on failure
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

@@ -1,0 +1,48 @@
+version: "2"
+
+# Show every finding, not just the first 3 of each identical message - a
+# capped count silently hides real issues instead of reporting them.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - sqlclosecheck
+    - errorlint
+    - gosec
+    - misspell
+  settings:
+    gosec:
+      excludes:
+        # Redundant with errcheck (already tuned above via exclude-functions)
+        # and, unlike errcheck, not configurable per-function.
+        - G104
+    errcheck:
+      # Deferred cleanup calls whose error is conventionally ignored in Go:
+      # closing a response body / rows on the read side, and rolling back a
+      # transaction that may already be committed or closed.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Tx).Rollback
+        # Writing an error/JSON response to the client: nothing actionable
+        # if the write itself fails partway through.
+        - (*encoding/json.Encoder).Encode
+  exclusions:
+    generated: lax
+    rules:
+      # Test files intentionally skip error checks on setup/teardown/decode
+      # calls (db.Close, json.Decode, w.Write) - that's not a real risk.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - errorlint
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

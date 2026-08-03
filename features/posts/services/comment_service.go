@@ -22,6 +22,9 @@ type CommentService struct {
 	notifications *notifservices.NotificationService
 }
 
+// NewCommentService constructs a CommentService backed by db, using
+// notifications to notify parent comment authors and post writers of new
+// comments.
 func NewCommentService(db *sql.DB, notifications *notifservices.NotificationService) *CommentService {
 	return &CommentService{db: db, queries: queries.NewSQLCommentQueries(db), notifications: notifications}
 }
@@ -41,7 +44,7 @@ func (s *CommentService) Create(postID, userID int, body string, parentID *int) 
 		replyRecipient := 0
 		if parentID != nil {
 			parentPostID, parentUserID, err := qtx.GetParentComment(*parentID)
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("parent comment not found")
 			}
 			if err != nil {
@@ -70,7 +73,7 @@ func (s *CommentService) Create(postID, userID int, body string, parentID *int) 
 		}
 
 		writerUserID, err := qtx.GetPostWriterUserID(postID)
-		if err != nil && err != sql.ErrNoRows {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err == nil && writerUserID.Valid {
