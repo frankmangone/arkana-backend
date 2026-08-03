@@ -71,9 +71,9 @@ func (s *QuizSessionService) CanAttempt(userID, moduleID int) (bool, error) {
 // Start is get-or-create: if the user already has an in-progress attempt
 // for this module it's resumed (navigating away and back never burns a new
 // attempt, and the POST is idempotent); otherwise it begins a new attempt,
-// running the selector once and persisting its full pick-order into
-// quiz_attempt_questions - this is what makes every later Next() call a
-// trivial, idempotent lookup instead of a re-run of selection logic.
+// running the selector once and persisting its full pick-order into the
+// attempt blob's Questions field - this is what makes every later Next()
+// call a trivial, idempotent lookup instead of a re-run of selection logic.
 func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (attemptUUID string, totalQuestions int, err error) {
 	moduleID, err := s.resolveModuleID(listSlug, moduleSlug)
 	if err != nil {
@@ -180,8 +180,8 @@ func (s *QuizSessionService) Availability(listSlug, moduleSlug string) (availabl
 	return true, languages, nil
 }
 
-// getOwnedAttempt loads a quiz_attempts row by its public uuid and
-// enforces that it belongs to userID - the actual guard against
+// getOwnedAttempt loads an attempt's Redis-backed metadata by its public
+// uuid and enforces that it belongs to userID - the actual guard against
 // cross-user access; the opaque uuid is defense-in-depth, never a
 // substitute for this check. Tasks 6-7 (Answer/Complete) call this same
 // helper.
@@ -286,8 +286,9 @@ type AnswerResult struct {
 // Answer grades questionUUID's response (or records a skip) against the
 // question at the attempt's current position, advancing it. Rejects if
 // questionUUID isn't the question actually at that position - this, plus
-// UNIQUE(attempt_id, question_id) on quiz_attempt_answers, is what stops
-// answering out of order or twice.
+// the Answers map being keyed by question id (a question id can only
+// occupy one key, so RecordAnswer can never store a second answer against
+// the same question), is what stops answering out of order or twice.
 func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string, response json.RawMessage, skipped bool, lang string) (*AnswerResult, error) {
 	attempt, err := s.getOwnedAttempt(userID, attemptUUID)
 	if err != nil {
@@ -388,12 +389,12 @@ type CompleteResult struct {
 	ReviewPostPaths []string
 }
 
-// Complete finalizes an attempt, requiring every question already have a
-// row in quiz_attempt_answers (answered or skipped, either counts as
-// "resolved"). The client always learns exactly when it's reached this
-// point from the last Answer() call's AttemptDone, so a premature
-// Complete call is a client bug, not a state this method papers over -
-// no auto-skip-the-rest behavior.
+// Complete finalizes an attempt, requiring every question already have an
+// entry in the attempt blob's Answers map (answered or skipped, either
+// counts as "resolved"). The client always learns exactly when it's
+// reached this point from the last Answer() call's AttemptDone, so a
+// premature Complete call is a client bug, not a state this method papers
+// over - no auto-skip-the-rest behavior.
 func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*CompleteResult, error) {
 	attempt, err := s.getOwnedAttempt(userID, attemptUUID)
 	if err != nil {

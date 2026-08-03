@@ -40,7 +40,15 @@ small resume-index key `quiz:active-attempt:{userID}:{moduleID}`. Both
 keys carry a 2-hour TTL that slides forward on every read or write
 (`Start`, `Next`, `Answer`, `Complete` all touch it) - an actively-used
 attempt never expires mid-session, while an abandoned one cleans itself
-up 2 hours after the last interaction. See
+up 2 hours after the last interaction. On `Complete`, the attempt blob
+itself is not special-cased - it keeps sliding on the same TTL like any
+other read/write - but the resume-index key is actively deleted at
+completion time rather than left to expire, which is what stops a
+completed attempt from being "resumed". That authoritative check is now
+also enforced directly inside `FindActiveAttemptUUID` itself (it loads
+the attempt and refuses to return one with `completed_at` set)
+regardless of whether the index-key deletion succeeded, so a single
+failed `Del` can never resurrect a finished attempt as resumable. See
 [docs/superpowers/specs/2026-08-03-quiz-attempts-redis-design.md](../superpowers/specs/2026-08-03-quiz-attempts-redis-design.md)
 for the full design.
 
@@ -50,7 +58,13 @@ Reuses `ADMIN_HMAC_SECRET` (same admin HMAC middleware as
 `posts`/`tags`/`readinglists`/`writers` — see
 [docs/modules/subscriptions.md](subscriptions.md#config)) for
 `POST /api/admin/questions`, and the existing JWT setup from
-`features/auth` for every session route. No new env vars.
+`features/auth` for every session route.
+
+One new env var, `REDIS_ADDR`, backs the attempt/session storage
+described above — defaults to `localhost:3334` for local dev (matching
+`docker-compose.yml`'s port mapping), but must be set explicitly in
+production. See [DEPLOYMENT.md](../../DEPLOYMENT.md#redis-required) —
+the API fails to start without a reachable Redis.
 
 Two implementation constants live in `features/quizzes/services` as Go
 `const`, not config: `questionsPerAttempt = 8` (how many questions

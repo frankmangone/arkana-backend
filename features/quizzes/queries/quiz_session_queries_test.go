@@ -544,6 +544,39 @@ func TestRedisQuizSessionQueriesAnswerAndComplete(t *testing.T) {
 		}
 	})
 
+	t.Run("FindActiveAttemptUUID still refuses a completed attempt even if the index-key Del was lost", func(t *testing.T) {
+		// Simulates MarkAttemptCompleted's save() succeeding but its
+		// subsequent Del() failing (e.g. a transient connection error) - the
+		// resume-index key survives even though the attempt is completed.
+		// FindActiveAttemptUUID must still authoritatively refuse to hand
+		// this attempt back as active/resumable, since it now loads the
+		// full blob and checks CompletedAt itself rather than trusting the
+		// index key's mere existence.
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		ctx := context.Background()
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.MarkAttemptCompleted("attempt-1", 100, true); err != nil {
+			t.Fatal(err)
+		}
+
+		// Re-create the resume-index key, simulating the lost Del - the
+		// completed attempt blob is still there, but its index key is back
+		// too, exactly as if the Del call had failed.
+		if err := redisClient.Set(ctx, "quiz:active-attempt:7:42", "attempt-1", attemptTTL).Err(); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := q.FindActiveAttemptUUID(7, 42)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound (a completed attempt must never be resumable, even with a dangling index key)", err)
+		}
+	})
+
 	t.Run("ReviewPostPaths aggregates missed questions' posts, deduped, in miss order", func(t *testing.T) {
 		db := setupTestDB(t)
 		redisClient := setupTestRedis(t)

@@ -180,12 +180,19 @@ func (q *RedisQuizSessionQueries) CreateAttempt(uuid string, moduleID, userID in
 }
 
 // FindActiveAttemptUUID looks up the resume index for a user/module pair.
-// It defensively confirms the attempt blob itself still exists before
-// trusting the index - guards the rare case where the index outlives the
-// blob by a beat; if the blob is gone, this is treated as "no active
-// attempt" so Start begins a fresh one instead of resuming a ghost. Once
-// confirmed live, both keys' TTLs are refreshed - this is a read path too,
-// so it slides the TTL forward exactly like load does.
+// It authoritatively loads the attempt blob itself before trusting the
+// index - this guards two cases, not just one: the blob having expired out
+// from under a still-live index (the index outlived the blob by a beat),
+// and the blob being present but already completed. The latter matters
+// because MarkAttemptCompleted's index-key Del is best-effort cleanup, not
+// the source of truth - if that Del ever fails (a transient Redis error
+// after the completed blob was already saved), this load-and-check is what
+// still refuses to hand back a completed attempt as "active", so Start
+// never resumes-forever a finished attempt. Either way - blob gone, or
+// blob completed - this is treated as "no active attempt" so Start begins
+// a fresh one. load() already refreshes both this key's and the blob
+// key's TTL on a successful load, so no separate TTL-refresh pipeline is
+// needed here.
 func (q *RedisQuizSessionQueries) FindActiveAttemptUUID(userID, moduleID int) (string, error) {
 	ctx := context.Background()
 	uuid, err := q.redisClient.Get(ctx, activeAttemptKey(userID, moduleID)).Result()
@@ -196,19 +203,15 @@ func (q *RedisQuizSessionQueries) FindActiveAttemptUUID(userID, moduleID int) (s
 		return "", err
 	}
 
-	exists, err := q.redisClient.Exists(ctx, attemptKey(uuid)).Result()
+	attempt, err := q.load(uuid)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
 	if err != nil {
 		return "", err
 	}
-	if exists == 0 {
+	if attempt.CompletedAt != nil {
 		return "", ErrNotFound
-	}
-
-	pipe := q.redisClient.TxPipeline()
-	pipe.Expire(ctx, activeAttemptKey(userID, moduleID), attemptTTL)
-	pipe.Expire(ctx, attemptKey(uuid), attemptTTL)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return "", err
 	}
 	return uuid, nil
 }
@@ -304,13 +307,17 @@ func (q *RedisQuizSessionQueries) CountCorrectAnswers(attemptUUID string) (int, 
 }
 
 // MarkAttemptCompleted finalizes an attempt's score, and removes its resume
-// index so it's never handed back by FindActiveAttemptUUID - mirroring the
-// original SQL implementation's `WHERE completed_at IS NULL` filter, which
-// otherwise has no Redis equivalent (FindActiveAttemptUUID only checks that
-// the blob still exists, not whether it's completed). The attempt blob
-// itself is left alone here - it still just expires normally via TTL, since
-// only the "is there an active attempt" pointer needs to disappear
-// immediately.
+// index so a completed attempt is never handed back by
+// FindActiveAttemptUUID a beat sooner than it has to be. This Del is now a
+// pure tidiness optimization, not the authoritative guard: FindActiveAttemptUUID
+// loads the full blob and checks CompletedAt itself, so even if this Del
+// fails (e.g. a transient Redis error right after save() succeeded), a
+// completed attempt still can never be resumed - it just means the stale
+// index key lingers a little longer until its TTL expires, instead of
+// disappearing immediately. The attempt blob itself is left alone here -
+// it still just expires normally via TTL (sliding forward on reads/writes
+// like any other attempt data), since only the "is there an active
+// attempt" pointer needs to disappear immediately.
 func (q *RedisQuizSessionQueries) MarkAttemptCompleted(attemptUUID string, score int, passed bool) error {
 	attempt, err := q.load(attemptUUID)
 	if err != nil {

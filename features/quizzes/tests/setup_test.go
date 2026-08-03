@@ -10,8 +10,8 @@ import (
 	authsvc "arkana/features/auth/services"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/redis/go-redis/v9"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
