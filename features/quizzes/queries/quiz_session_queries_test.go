@@ -328,3 +328,117 @@ func TestRedisQuizSessionQueriesAttemptLifecycle(t *testing.T) {
 		}
 	})
 }
+
+func TestRedisQuizSessionQueriesProgress(t *testing.T) {
+	t.Run("TotalQuestions and AnsweredCount reflect the created attempt", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101, 102}); err != nil {
+			t.Fatal(err)
+		}
+
+		total, err := q.TotalQuestions("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 {
+			t.Errorf("total = %d, want 2", total)
+		}
+
+		answered, err := q.AnsweredCount("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if answered != 0 {
+			t.Errorf("answered = %d, want 0 (nothing recorded yet)", answered)
+		}
+	})
+
+	t.Run("QuestionIDAtPosition returns the question id at a given position", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101, 102}); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := q.QuestionIDAtPosition("attempt-1", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 102 {
+			t.Errorf("got = %d, want 102", got)
+		}
+	})
+
+	t.Run("QuestionIDAtPosition returns ErrNotFound for an out-of-range position", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := q.QuestionIDAtPosition("attempt-1", 5)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("QuestionAtPosition joins the Redis order with the SQL question row", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		postID := seedPost(t, db, "list-1/item-1")
+		questionID := seedQuestion(t, db, "q1", postID)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{questionID}); err != nil {
+			t.Fatal(err)
+		}
+
+		gotID, gotUUID, gotType, gotAnswerKey, err := q.QuestionAtPosition("attempt-1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotID != questionID {
+			t.Errorf("gotID = %d, want %d", gotID, questionID)
+		}
+		if gotUUID != "q1-uuid" {
+			t.Errorf("gotUUID = %q, want %q", gotUUID, "q1-uuid")
+		}
+		if gotType != "single_choice" {
+			t.Errorf("gotType = %q, want %q", gotType, "single_choice")
+		}
+		if gotAnswerKey != "{}" {
+			t.Errorf("gotAnswerKey = %q, want %q", gotAnswerKey, "{}")
+		}
+	})
+
+	t.Run("load refreshes the attempt's TTL on every read, not only on write", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx := context.Background()
+		key := "quiz:attempt:attempt-1"
+		if err := redisClient.Expire(ctx, key, 5*time.Second).Err(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := q.TotalQuestions("attempt-1"); err != nil {
+			t.Fatal(err)
+		}
+
+		ttl, err := redisClient.TTL(ctx, key).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ttl <= 5*time.Second {
+			t.Fatalf("TTL after a read = %v, want > 5s (a read must slide the TTL back up)", ttl)
+		}
+	})
+}

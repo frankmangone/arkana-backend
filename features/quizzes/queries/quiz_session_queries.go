@@ -214,6 +214,52 @@ func (q *RedisQuizSessionQueries) GetAttemptMeta(attemptUUID string) (ownerID in
 	return attempt.UserID, attempt.CompletedAt, nil
 }
 
+// TotalQuestions returns how many questions an attempt's pick-order has.
+func (q *RedisQuizSessionQueries) TotalQuestions(attemptUUID string) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	return len(attempt.Questions), nil
+}
+
+// AnsweredCount returns how many questions an attempt has answered or
+// skipped.
+func (q *RedisQuizSessionQueries) AnsweredCount(attemptUUID string) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	return len(attempt.Answers), nil
+}
+
+// QuestionIDAtPosition returns the question_id at a given position in an
+// attempt's pick-order.
+func (q *RedisQuizSessionQueries) QuestionIDAtPosition(attemptUUID string, position int) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	if position < 0 || position >= len(attempt.Questions) {
+		return 0, ErrNotFound
+	}
+	return attempt.Questions[position], nil
+}
+
+// QuestionAtPosition returns the question at an attempt's given position,
+// for answer validation - the question id/order comes from Redis, the
+// uuid/type/answer_key come from the (unchanged) SQL question bank.
+func (q *RedisQuizSessionQueries) QuestionAtPosition(attemptUUID string, position int) (questionID int, questionUUID, qType, answerKey string, err error) {
+	questionID, err = q.QuestionIDAtPosition(attemptUUID, position)
+	if err != nil {
+		return 0, "", "", "", err
+	}
+	err = q.db.QueryRow(
+		"SELECT uuid, type, answer_key FROM questions WHERE id = ?", questionID,
+	).Scan(&questionUUID, &qType, &answerKey)
+	return
+}
+
 // ResolveModuleID looks up a reading_list_modules.id from its public
 // listSlug/moduleSlug pair. Returns sql.ErrNoRows (unmodified) if not found.
 func (q *RedisQuizSessionQueries) ResolveModuleID(listSlug, moduleSlug string) (int, error) {
