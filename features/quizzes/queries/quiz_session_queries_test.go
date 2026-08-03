@@ -442,3 +442,142 @@ func TestRedisQuizSessionQueriesProgress(t *testing.T) {
 		}
 	})
 }
+
+func TestRedisQuizSessionQueriesAnswerAndComplete(t *testing.T) {
+	t.Run("RecordAnswer stores the answer and CountCorrectAnswers counts it", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101, 102}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := q.RecordAnswer("attempt-1", 101, `{"selectedOptionIds":["b"]}`, true, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.RecordAnswer("attempt-1", 102, "null", false, true); err != nil {
+			t.Fatal(err)
+		}
+
+		answered, err := q.AnsweredCount("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if answered != 2 {
+			t.Fatalf("answered = %d, want 2", answered)
+		}
+
+		correct, err := q.CountCorrectAnswers("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if correct != 1 {
+			t.Fatalf("correct = %d, want 1", correct)
+		}
+	})
+
+	t.Run("save (via RecordAnswer) refreshes the paired resume index's TTL, not just the blob's", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		ctx := context.Background()
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+		// Shrink the index key's TTL well below attemptTTL, simulating time
+		// having passed since CreateAttempt.
+		shrunk := 5 * time.Second
+		if err := redisClient.Expire(ctx, "quiz:active-attempt:7:42", shrunk).Err(); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := q.RecordAnswer("attempt-1", 101, "null", true, false); err != nil {
+			t.Fatal(err)
+		}
+
+		indexTTL, err := redisClient.TTL(ctx, "quiz:active-attempt:7:42").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if indexTTL <= shrunk {
+			t.Fatalf("index TTL = %v, want it restored above the shrunk %v", indexTTL, shrunk)
+		}
+	})
+
+	t.Run("MarkAttemptCompleted sets completed_at, score, and passed", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := q.MarkAttemptCompleted("attempt-1", 100, true); err != nil {
+			t.Fatal(err)
+		}
+
+		_, completedAt, err := q.GetAttemptMeta("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completedAt == nil {
+			t.Fatal("completedAt is nil, want set")
+		}
+	})
+
+	t.Run("ReviewPostPaths aggregates missed questions' posts, deduped, in miss order", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		postA := seedPost(t, db, "list-1/a")
+		postB := seedPost(t, db, "list-1/b")
+		q1 := seedQuestion(t, db, "q1", postA)
+		q2 := seedQuestion(t, db, "q2", postB)
+		// q2 is also linked to postA - postA must appear only once overall.
+		if _, err := db.Exec("INSERT INTO question_posts (question_id, post_id) VALUES (?, ?)", q2, postA); err != nil {
+			t.Fatal(err)
+		}
+
+		qr := NewRedisQuizSessionQueries(db, redisClient)
+		if err := qr.CreateAttempt("attempt-1", 42, 7, []int{q1, q2}); err != nil {
+			t.Fatal(err)
+		}
+		if err := qr.RecordAnswer("attempt-1", q1, "null", false, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := qr.RecordAnswer("attempt-1", q2, "null", false, false); err != nil {
+			t.Fatal(err)
+		}
+
+		paths, err := qr.ReviewPostPaths("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(paths) != 2 || paths[0] != "list-1/a" || paths[1] != "list-1/b" {
+			t.Fatalf("paths = %v, want [list-1/a list-1/b] in miss order, deduped", paths)
+		}
+	})
+
+	t.Run("ReviewPostPaths returns nothing for a perfect attempt", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		postID := seedPost(t, db, "list-1/a")
+		questionID := seedQuestion(t, db, "q1", postID)
+
+		qr := NewRedisQuizSessionQueries(db, redisClient)
+		if err := qr.CreateAttempt("attempt-1", 42, 7, []int{questionID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := qr.RecordAnswer("attempt-1", questionID, `{"selectedOptionIds":["b"]}`, true, false); err != nil {
+			t.Fatal(err)
+		}
+
+		paths, err := qr.ReviewPostPaths("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(paths) != 0 {
+			t.Fatalf("paths = %v, want empty", paths)
+		}
+	})
+}

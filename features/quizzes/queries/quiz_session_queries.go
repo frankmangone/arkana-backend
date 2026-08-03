@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"arkana/features/quizzes/models"
@@ -133,15 +134,23 @@ func (q *RedisQuizSessionQueries) load(attemptUUID string) (*redisAttempt, error
 	return &attempt, nil
 }
 
-// save re-serializes and writes an attempt blob back, refreshing its TTL
-// (SET with an expiry both writes the value and resets the TTL in one
-// command).
+// save re-serializes and writes an attempt blob back, refreshing both its
+// own TTL and its paired resume index's TTL - write paths must slide both
+// keys' TTLs forward exactly like load does, per this feature's TTL policy
+// (both keys always carry the same TTL, refreshed uniformly on reads and
+// writes).
 func (q *RedisQuizSessionQueries) save(attempt *redisAttempt) error {
 	data, err := json.Marshal(attempt)
 	if err != nil {
 		return err
 	}
-	return q.redisClient.Set(context.Background(), attemptKey(attempt.UUID), data, attemptTTL).Err()
+
+	ctx := context.Background()
+	pipe := q.redisClient.TxPipeline()
+	pipe.Set(ctx, attemptKey(attempt.UUID), data, attemptTTL)
+	pipe.Expire(ctx, activeAttemptKey(attempt.UserID, attempt.ModuleID), attemptTTL)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // CreateAttempt writes a brand-new attempt's blob and its resume index in
@@ -259,6 +268,101 @@ func (q *RedisQuizSessionQueries) QuestionAtPosition(attemptUUID string, positio
 	).Scan(&questionUUID, &qType, &answerKey)
 	return
 }
+
+// RecordAnswer stores a graded (or skipped) answer against a question in
+// the attempt's Answers map.
+func (q *RedisQuizSessionQueries) RecordAnswer(attemptUUID string, questionID int, response string, correct, skipped bool) error {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return err
+	}
+	if attempt.Answers == nil {
+		attempt.Answers = map[int]redisAnswer{}
+	}
+	attempt.Answers[questionID] = redisAnswer{
+		Response:   response,
+		Correct:    correct,
+		Skipped:    skipped,
+		AnsweredAt: time.Now(),
+	}
+	return q.save(attempt)
+}
+
+// CountCorrectAnswers returns how many of an attempt's answers were correct.
+func (q *RedisQuizSessionQueries) CountCorrectAnswers(attemptUUID string) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, a := range attempt.Answers {
+		if a.Correct {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// MarkAttemptCompleted finalizes an attempt's score.
+func (q *RedisQuizSessionQueries) MarkAttemptCompleted(attemptUUID string, score int, passed bool) error {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	attempt.CompletedAt = &now
+	attempt.Score = &score
+	attempt.Passed = &passed
+	return q.save(attempt)
+}
+
+// ReviewPostPaths aggregates the reinforcement posts of every missed
+// (wrong or skipped) answer in an attempt, deduped, ordered by when the
+// miss happened (AnsweredAt stands in for quiz_attempt_answers.id's
+// insertion order, since a Go map has no iteration order of its own).
+func (q *RedisQuizSessionQueries) ReviewPostPaths(attemptUUID string) ([]string, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	type missed struct {
+		questionID int
+		answeredAt time.Time
+	}
+	var missedList []missed
+	for qid, a := range attempt.Answers {
+		if !a.Correct {
+			missedList = append(missedList, missed{questionID: qid, answeredAt: a.AnsweredAt})
+		}
+	}
+	sort.Slice(missedList, func(i, j int) bool {
+		return missedList[i].answeredAt.Before(missedList[j].answeredAt)
+	})
+
+	seen := map[string]bool{}
+	var paths []string
+	for _, m := range missedList {
+		questionPaths, err := q.ReinforcementPostPaths(m.questionID)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range questionPaths {
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths, nil
+}
+
+// Compile-time check that RedisQuizSessionQueries satisfies
+// QuizSessionQueries in full - this is the first task where every
+// interface method exists, so this is where the assertion is added (it
+// would fail to compile in Tasks 2-4, where the struct is deliberately
+// incomplete).
+var _ QuizSessionQueries = (*RedisQuizSessionQueries)(nil)
 
 // ResolveModuleID looks up a reading_list_modules.id from its public
 // listSlug/moduleSlug pair. Returns sql.ErrNoRows (unmodified) if not found.
