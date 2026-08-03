@@ -33,7 +33,7 @@ func seedSingleQuestionAttempt(t *testing.T, qType, answerKey string) (db *sql.D
 	}
 	insertTestQuestionTranslation(t, db, int(questionID), "en", "prompt", `{"explanation":"read again"}`)
 
-	svc = services.NewQuizSessionService(db)
+	svc = services.NewQuizSessionService(db, setupTestRedis(t))
 	attemptUUID, total, err := svc.Start(userID, "list-1", "module-1")
 	if err != nil {
 		t.Fatal(err)
