@@ -1,8 +1,11 @@
 package queries
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	_ "github.com/mattn/go-sqlite3"
@@ -168,6 +171,94 @@ func TestRedisQuizSessionQueriesBankReads(t *testing.T) {
 		}
 		if len(pool) != 1 {
 			t.Fatalf("pool len = %d, want 1", len(pool))
+		}
+	})
+}
+
+func TestRedisQuizSessionQueriesAttemptLifecycle(t *testing.T) {
+	t.Run("CreateAttempt persists the blob and the resume index, both with a TTL", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101, 102}); err != nil {
+			t.Fatal(err)
+		}
+
+		ownerID, completedAt, err := q.GetAttemptMeta("attempt-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ownerID != 7 {
+			t.Errorf("ownerID = %d, want 7", ownerID)
+		}
+		if completedAt != nil {
+			t.Errorf("completedAt = %v, want nil (a fresh attempt isn't completed)", completedAt)
+		}
+
+		resumedUUID, err := q.FindActiveAttemptUUID(7, 42)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resumedUUID != "attempt-1" {
+			t.Errorf("resumedUUID = %q, want %q", resumedUUID, "attempt-1")
+		}
+
+		ctx := context.Background()
+		ttl, err := redisClient.TTL(ctx, "quiz:attempt:attempt-1").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ttl <= 0 || ttl > 2*time.Hour {
+			t.Fatalf("attempt TTL = %v, want a positive duration <= 2h", ttl)
+		}
+		indexTTL, err := redisClient.TTL(ctx, "quiz:active-attempt:7:42").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if indexTTL <= 0 || indexTTL > 2*time.Hour {
+			t.Fatalf("index TTL = %v, want a positive duration <= 2h", indexTTL)
+		}
+	})
+
+	t.Run("FindActiveAttemptUUID returns ErrNotFound when no attempt exists", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+
+		_, err := q.FindActiveAttemptUUID(7, 42)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("FindActiveAttemptUUID treats a dangling index (blob already gone) as not found", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+
+		if err := q.CreateAttempt("attempt-1", 42, 7, []int{101}); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate the blob expiring slightly before the index key.
+		if err := redisClient.Del(context.Background(), "quiz:attempt:attempt-1").Err(); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := q.FindActiveAttemptUUID(7, 42)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("GetAttemptMeta returns ErrNotFound for an unknown uuid", func(t *testing.T) {
+		db := setupTestDB(t)
+		redisClient := setupTestRedis(t)
+		q := NewRedisQuizSessionQueries(db, redisClient)
+
+		_, _, err := q.GetAttemptMeta("nonexistent")
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
 }

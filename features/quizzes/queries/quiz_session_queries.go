@@ -1,8 +1,11 @@
 package queries
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"arkana/features/quizzes/models"
@@ -59,6 +62,142 @@ type RedisQuizSessionQueries struct {
 // first, matching this codebase's constructor convention.
 func NewRedisQuizSessionQueries(db *sql.DB, redisClient *redis.Client) *RedisQuizSessionQueries {
 	return &RedisQuizSessionQueries{db: db, redisClient: redisClient}
+}
+
+// attemptTTL is the sliding TTL for all attempt-related Redis keys - reset
+// on every read or write, including read-only calls (see the load/save
+// helpers below). Two hours is generous for a distracted/interrupted
+// session while still cleaning up same-day.
+const attemptTTL = 2 * time.Hour
+
+func attemptKey(uuid string) string {
+	return "quiz:attempt:" + uuid
+}
+
+func activeAttemptKey(userID, moduleID int) string {
+	return fmt.Sprintf("quiz:active-attempt:%d:%d", userID, moduleID)
+}
+
+// redisAttempt is the whole-attempt JSON blob stored at attemptKey(uuid).
+// encoding/json handles the int-keyed Answers map natively (stringifying
+// keys on marshal, parsing back to int on unmarshal).
+type redisAttempt struct {
+	UUID        string              `json:"uuid"`
+	ModuleID    int                 `json:"module_id"`
+	UserID      int                 `json:"user_id"`
+	Tier        string              `json:"tier"`
+	StartedAt   time.Time           `json:"started_at"`
+	CompletedAt *time.Time          `json:"completed_at,omitempty"`
+	Score       *int                `json:"score,omitempty"`
+	Passed      *bool               `json:"passed,omitempty"`
+	Questions   []int               `json:"questions"` // position -> question_id, set once at CreateAttempt
+	Answers     map[int]redisAnswer `json:"answers"`   // question_id -> answer
+}
+
+// redisAnswer records one graded (or skipped) answer. AnsweredAt gives
+// ReviewPostPaths (Task 5) a chronological order to walk missed answers
+// in, since a Go map has none - the same role quiz_attempt_answers.id's
+// insertion order played in SQL.
+type redisAnswer struct {
+	Response   string    `json:"response"`
+	Correct    bool      `json:"correct"`
+	Skipped    bool      `json:"skipped"`
+	AnsweredAt time.Time `json:"answered_at"`
+}
+
+// load fetches and decodes an attempt blob, sliding its TTL forward - read
+// paths advance the TTL exactly like write paths do, per this feature's
+// TTL policy.
+func (q *RedisQuizSessionQueries) load(attemptUUID string) (*redisAttempt, error) {
+	ctx := context.Background()
+	data, err := q.redisClient.Get(ctx, attemptKey(attemptUUID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var attempt redisAttempt
+	if err := json.Unmarshal(data, &attempt); err != nil {
+		return nil, err
+	}
+	if err := q.redisClient.Expire(ctx, attemptKey(attemptUUID), attemptTTL).Err(); err != nil {
+		return nil, err
+	}
+	return &attempt, nil
+}
+
+// save re-serializes and writes an attempt blob back, refreshing its TTL
+// (SET with an expiry both writes the value and resets the TTL in one
+// command).
+func (q *RedisQuizSessionQueries) save(attempt *redisAttempt) error {
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		return err
+	}
+	return q.redisClient.Set(context.Background(), attemptKey(attempt.UUID), data, attemptTTL).Err()
+}
+
+// CreateAttempt writes a brand-new attempt's blob and its resume index in
+// one Redis pipeline (MULTI/EXEC), so there's no window where one key
+// exists without the other.
+func (q *RedisQuizSessionQueries) CreateAttempt(uuid string, moduleID, userID int, questionOrder []int) error {
+	attempt := &redisAttempt{
+		UUID:      uuid,
+		ModuleID:  moduleID,
+		UserID:    userID,
+		Tier:      "standard",
+		StartedAt: time.Now(),
+		Questions: questionOrder,
+		Answers:   map[int]redisAnswer{},
+	}
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	pipe := q.redisClient.TxPipeline()
+	pipe.Set(ctx, attemptKey(uuid), data, attemptTTL)
+	pipe.Set(ctx, activeAttemptKey(userID, moduleID), uuid, attemptTTL)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// FindActiveAttemptUUID looks up the resume index for a user/module pair.
+// It defensively confirms the attempt blob itself still exists before
+// trusting the index - guards the rare case where the index outlives the
+// blob by a beat; if the blob is gone, this is treated as "no active
+// attempt" so Start begins a fresh one instead of resuming a ghost.
+func (q *RedisQuizSessionQueries) FindActiveAttemptUUID(userID, moduleID int) (string, error) {
+	ctx := context.Background()
+	uuid, err := q.redisClient.Get(ctx, activeAttemptKey(userID, moduleID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+
+	exists, err := q.redisClient.Exists(ctx, attemptKey(uuid)).Result()
+	if err != nil {
+		return "", err
+	}
+	if exists == 0 {
+		return "", ErrNotFound
+	}
+	return uuid, nil
+}
+
+// GetAttemptMeta returns the two fields getOwnedAttempt needs: who owns
+// this attempt, and whether it's already completed.
+func (q *RedisQuizSessionQueries) GetAttemptMeta(attemptUUID string) (ownerID int, completedAt *time.Time, err error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return attempt.UserID, attempt.CompletedAt, nil
 }
 
 // ResolveModuleID looks up a reading_list_modules.id from its public
