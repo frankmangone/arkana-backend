@@ -9,11 +9,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/gorilla/mux"
 )
-
-var validate = validator.New()
 
 type CommentHandler struct {
 	postService    *services.PostService
@@ -76,7 +73,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validate.Struct(payload); err != nil {
+	if err := httputil.ValidateRequest(payload); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid payload: "+err.Error())
 		return
 	}

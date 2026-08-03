@@ -12,6 +12,7 @@ type AdminWriterService struct {
 	queries queries.AdminWriterQueries
 }
 
+// NewAdminWriterService creates an AdminWriterService backed by the given database connection.
 func NewAdminWriterService(db *sql.DB) *AdminWriterService {
 	return &AdminWriterService{db: db, queries: queries.NewSQLAdminWriterQueries(db)}
 }

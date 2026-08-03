@@ -275,13 +275,13 @@ func TestQuizSessionServiceNext(t *testing.T) {
 		var attemptID int
 		db.QueryRow("SELECT id FROM quiz_attempts WHERE uuid = ?", attemptUUID).Scan(&attemptID)
 		rows, _ := db.Query("SELECT question_id FROM quiz_attempt_questions WHERE attempt_id = ?", attemptID)
+		defer rows.Close()
 		var qids []int
 		for rows.Next() {
 			var id int
 			rows.Scan(&id)
 			qids = append(qids, id)
 		}
-		rows.Close()
 		for _, qid := range qids {
 			if _, err := db.Exec(
 				"INSERT INTO quiz_attempt_answers (attempt_id, question_id, response, correct) VALUES (?, ?, '{}', 1)",

@@ -3,10 +3,9 @@ package queries
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 
-	dbpkg "arkana/shared/db"
 	"arkana/features/tags/models"
+	dbpkg "arkana/shared/db"
 )
 
 type TagQueries interface {
@@ -132,16 +131,9 @@ func (q *SQLTagQueries) MissingTags(slugs []string) ([]string, error) {
 		return nil, nil
 	}
 
-	placeholders := make([]string, len(slugs))
-	args := make([]interface{}, len(slugs))
-	for i, slug := range slugs {
-		placeholders[i] = "?"
-		args[i] = slug
-	}
-
 	rows, err := q.db.Query(
-		fmt.Sprintf("SELECT slug FROM tags WHERE slug IN (%s)", strings.Join(placeholders, ",")),
-		args...,
+		fmt.Sprintf("SELECT slug FROM tags WHERE slug IN (%s)", dbpkg.Placeholders(len(slugs))),
+		dbpkg.ToAny(slugs)...,
 	)
 	if err != nil {
 		return nil, err
@@ -176,16 +168,9 @@ func (q *SQLTagQueries) GetIDsBySlugs(slugs []string) (map[string]int, error) {
 		return map[string]int{}, nil
 	}
 
-	placeholders := make([]string, len(slugs))
-	args := make([]interface{}, len(slugs))
-	for i, slug := range slugs {
-		placeholders[i] = "?"
-		args[i] = slug
-	}
-
 	rows, err := q.db.Query(
-		fmt.Sprintf("SELECT id, slug FROM tags WHERE slug IN (%s)", strings.Join(placeholders, ",")),
-		args...,
+		fmt.Sprintf("SELECT id, slug FROM tags WHERE slug IN (%s)", dbpkg.Placeholders(len(slugs))),
+		dbpkg.ToAny(slugs)...,
 	)
 	if err != nil {
 		return nil, err

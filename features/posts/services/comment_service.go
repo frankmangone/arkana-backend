@@ -5,6 +5,7 @@ import (
 	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/models"
 	"arkana/features/posts/queries"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -21,6 +22,9 @@ type CommentService struct {
 	notifications *notifservices.NotificationService
 }
 
+// NewCommentService constructs a CommentService backed by db, using
+// notifications to notify parent comment authors and post writers of new
+// comments.
 func NewCommentService(db *sql.DB, notifications *notifservices.NotificationService) *CommentService {
 	return &CommentService{db: db, queries: queries.NewSQLCommentQueries(db), notifications: notifications}
 }
@@ -33,62 +37,62 @@ func (s *CommentService) Create(postID, userID int, body string, parentID *int) 
 		return nil, ErrCommentTooLong
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
+	var comment *models.Comment
+	err := dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
 
-	replyRecipient := 0
-	if parentID != nil {
-		parentPostID, parentUserID, err := qtx.GetParentComment(*parentID)
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("parent comment not found")
+		replyRecipient := 0
+		if parentID != nil {
+			parentPostID, parentUserID, err := qtx.GetParentComment(*parentID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("parent comment not found")
+			}
+			if err != nil {
+				return err
+			}
+			if parentPostID != postID {
+				return fmt.Errorf("parent comment belongs to a different post")
+			}
+			replyRecipient = parentUserID
 		}
+
+		id, err := qtx.InsertComment(postID, userID, parentID, body)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if parentPostID != postID {
-			return nil, fmt.Errorf("parent comment belongs to a different post")
+
+		c, err := qtx.GetCommentByID(id)
+		if err != nil {
+			return err
 		}
-		replyRecipient = parentUserID
-	}
 
-	id, err := qtx.InsertComment(postID, userID, parentID, body)
-	if err != nil {
-		return nil, err
-	}
-
-	c, err := qtx.GetCommentByID(id)
-	if err != nil {
-		return nil, err
-	}
-
-	if replyRecipient != 0 {
-		if err := s.notifications.Create(tx, replyRecipient, userID, notifmodels.TypeCommentReply, &postID, &c.ID); err != nil {
-			return nil, err
-		}
-	}
-
-	writerUserID, err := qtx.GetPostWriterUserID(postID)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-	if err == nil && writerUserID.Valid {
-		writer := int(writerUserID.Int64)
-		if writer != replyRecipient {
-			if err := s.notifications.Create(tx, writer, userID, notifmodels.TypePostCommented, &postID, &c.ID); err != nil {
-				return nil, err
+		if replyRecipient != 0 {
+			if err := s.notifications.Create(tx, replyRecipient, userID, notifmodels.TypeCommentReply, &postID, &c.ID); err != nil {
+				return err
 			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
+		writerUserID, err := qtx.GetPostWriterUserID(postID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && writerUserID.Valid {
+			writer := int(writerUserID.Int64)
+			if writer != replyRecipient {
+				if err := s.notifications.Create(tx, writer, userID, notifmodels.TypePostCommented, &postID, &c.ID); err != nil {
+					return err
+				}
+			}
+		}
+
+		comment = c
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	return c, nil
+	return comment, nil
 }
 
 // GetByPostID returns all comments for a post, ordered by creation time.

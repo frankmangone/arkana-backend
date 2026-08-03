@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -24,8 +25,8 @@ func (c *Config) Validate() error {
 
 // formatValidationErrors formats validator errors to include environment variable names
 func formatValidationErrors(err error) error {
-	validationErrors, ok := err.(validator.ValidationErrors)
-	if !ok {
+	var validationErrors validator.ValidationErrors
+	if !errors.As(err, &validationErrors) {
 		return &ValidationError{Message: err.Error()}
 	}
 

@@ -3,6 +3,7 @@ package services
 import (
 	"arkana/features/quizzes/models"
 	"arkana/features/quizzes/queries"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -49,6 +50,9 @@ type QuestionService struct {
 	tags    TagChecker
 }
 
+// NewQuestionService constructs a QuestionService backed by db, using posts
+// and tags to validate post paths and tag slugs referenced by published
+// questions.
 func NewQuestionService(db *sql.DB, posts PostChecker, tags TagChecker) *QuestionService {
 	return &QuestionService{db: db, queries: queries.NewSQLQuestionQueries(db), posts: posts, tags: tags}
 }
@@ -92,35 +96,34 @@ func (s *QuestionService) Publish(payloads []models.QuestionPayload) (int, error
 		return 0, err
 	}
 
-	tx, err := s.db.Begin()
+	err = dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
+
+		for _, p := range payloads {
+			questionID, err := qtx.UpsertQuestion(p)
+			if err != nil {
+				return err
+			}
+			if err := qtx.UpsertTranslations(questionID, p.Translations); err != nil {
+				return err
+			}
+			if err := qtx.RelinkTags(questionID, p.Tags, tagIDs); err != nil {
+				return err
+			}
+			if err := qtx.RelinkPosts(questionID, p.PostPaths, postIDs); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
-
-	for _, p := range payloads {
-		questionID, err := qtx.UpsertQuestion(p)
-		if err != nil {
-			return 0, err
-		}
-		if err := qtx.UpsertTranslations(questionID, p.Translations); err != nil {
-			return 0, err
-		}
-		if err := qtx.RelinkTags(questionID, p.Tags, tagIDs); err != nil {
-			return 0, err
-		}
-		if err := qtx.RelinkPosts(questionID, p.PostPaths, postIDs); err != nil {
-			return 0, err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return len(payloads), nil
 }
 
+// dedupe returns items with duplicates removed, preserving first-occurrence
+// order.
 func dedupe(items []string) []string {
 	seen := make(map[string]bool, len(items))
 	var out []string

@@ -1,8 +1,14 @@
+// Package services implements the business logic for tags. Its main type,
+// TagService, wraps a queries.TagQueries to sync tags and their translations
+// from a source payload, list all tags, and look up tags by slug - keeping
+// transaction handling and query details out of the HTTP handler layer that
+// wires it into the rest of the app.
 package services
 
 import (
 	"arkana/features/tags/models"
 	"arkana/features/tags/queries"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 )
 
@@ -11,6 +17,8 @@ type TagService struct {
 	queries queries.TagQueries
 }
 
+// NewTagService constructs a TagService backed by db, wiring it to the
+// default SQL-backed TagQueries implementation.
 func NewTagService(db *sql.DB) *TagService {
 	return &TagService{db: db, queries: queries.NewSQLTagQueries(db)}
 }
@@ -20,19 +28,17 @@ func NewTagService(db *sql.DB) *TagService {
 // payloads is left untouched, never deleted, so removing a tag from the
 // source file can never orphan a post that still references it.
 func (s *TagService) Sync(payloads []models.TagPayload) (int, error) {
-	tx, err := s.db.Begin()
+	var n int
+	err := dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
+		synced, err := qtx.Sync(payloads)
+		if err != nil {
+			return err
+		}
+		n = synced
+		return nil
+	})
 	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	qtx := s.queries.WithTx(tx)
-	n, err := qtx.Sync(payloads)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return n, nil

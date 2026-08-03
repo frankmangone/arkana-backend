@@ -52,7 +52,7 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read-side close, nothing actionable on failure
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)

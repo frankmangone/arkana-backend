@@ -3,9 +3,9 @@ package readinglists
 import (
 	"database/sql"
 
+	postsservices "arkana/features/posts/services"
 	"arkana/features/readinglists/handlers"
 	"arkana/features/readinglists/services"
-	postsservices "arkana/features/posts/services"
 	"arkana/shared/adminauth"
 
 	"github.com/gorilla/mux"

@@ -170,7 +170,7 @@ func TestReadingListServicePublish(t *testing.T) {
 
 		// Create a payload with modules NOT in Order sequence
 		unordered := models.ReadingListPayload{
-			Slug:       "test-order",
+			Slug: "test-order",
 			Translations: map[string]models.Translation{
 				"en": {Title: "Test Order", Description: "Test"},
 			},

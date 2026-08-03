@@ -45,6 +45,9 @@ type AdminPostService struct {
 	tags    TagChecker
 }
 
+// NewAdminPostService constructs an AdminPostService backed by db, composing
+// posts for posts-row access, indexer for search indexing, and tags for tag
+// validation.
 func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer, tags TagChecker) *AdminPostService {
 	return &AdminPostService{db: db, queries: queries.NewSQLAdminPostQueries(db), posts: posts, indexer: indexer, tags: tags}
 }

@@ -26,7 +26,7 @@ func (h *LoginHandler) Login(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer r.Body.Close() //nolint:errcheck // read-side close, nothing actionable on failure
 
 	log.Printf("[Login] Request body length: %d bytes", len(body))
 

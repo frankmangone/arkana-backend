@@ -1,8 +1,8 @@
 package queries
 
 import (
-	dbpkg "arkana/shared/db"
 	"arkana/features/quizzes/models"
+	dbpkg "arkana/shared/db"
 	"arkana/shared/idgen"
 	"database/sql"
 )

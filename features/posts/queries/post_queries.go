@@ -1,11 +1,10 @@
 package queries
 
 import (
-	dbpkg "arkana/shared/db"
 	"arkana/features/posts/models"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 type PostQueries interface {
@@ -87,16 +86,9 @@ func (q *SQLPostQueries) MissingPaths(paths []string) ([]string, error) {
 		return nil, nil
 	}
 
-	placeholders := make([]string, len(paths))
-	args := make([]interface{}, len(paths))
-	for i, p := range paths {
-		placeholders[i] = "?"
-		args[i] = p
-	}
-
 	rows, err := q.db.Query(
-		fmt.Sprintf("SELECT path_identifier FROM posts WHERE path_identifier IN (%s)", strings.Join(placeholders, ",")),
-		args...,
+		fmt.Sprintf("SELECT path_identifier FROM posts WHERE path_identifier IN (%s)", dbpkg.Placeholders(len(paths))),
+		dbpkg.ToAny(paths)...,
 	)
 	if err != nil {
 		return nil, err
@@ -131,16 +123,9 @@ func (q *SQLPostQueries) GetIDsByPaths(paths []string) (map[string]int, error) {
 		return map[string]int{}, nil
 	}
 
-	placeholders := make([]string, len(paths))
-	args := make([]interface{}, len(paths))
-	for i, p := range paths {
-		placeholders[i] = "?"
-		args[i] = p
-	}
-
 	rows, err := q.db.Query(
-		fmt.Sprintf("SELECT id, path_identifier FROM posts WHERE path_identifier IN (%s)", strings.Join(placeholders, ",")),
-		args...,
+		fmt.Sprintf("SELECT id, path_identifier FROM posts WHERE path_identifier IN (%s)", dbpkg.Placeholders(len(paths))),
+		dbpkg.ToAny(paths)...,
 	)
 	if err != nil {
 		return nil, err
@@ -256,23 +241,15 @@ func (q *SQLPostQueries) GetReadStatuses(paths []string, userID int) (map[string
 		return result, nil
 	}
 
-	placeholders := make([]string, len(paths))
-	args := make([]interface{}, 0, len(paths)+1)
-	for i, p := range paths {
-		placeholders[i] = "?"
-		args = append(args, p)
-	}
-	args = append(args, userID)
-
 	query := fmt.Sprintf(
 		`SELECT p.path_identifier
 		 FROM posts p
 		 JOIN post_reads r ON r.post_id = p.id
 		 WHERE p.path_identifier IN (%s) AND r.user_id = ?`,
-		strings.Join(placeholders, ","),
+		dbpkg.Placeholders(len(paths)),
 	)
 
-	rows, err := q.db.Query(query, args...)
+	rows, err := q.db.Query(query, append(dbpkg.ToAny(paths), userID)...)
 	if err != nil {
 		return nil, err
 	}

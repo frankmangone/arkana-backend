@@ -1,8 +1,17 @@
+// Package services implements the quiz feature's business logic: question
+// publishing and validation (QuestionService, question_service.go), next-
+// question selection over a module's question pool (QuestionSelector /
+// WeightedRandomSelector, selector.go), type-specific answer grading
+// (grade and its gradeChoice/gradeAssignments/gradeRange/gradeSequencing/
+// gradeFillBlank helpers, grading.go), and the quiz attempt lifecycle -
+// start or resume an attempt, serve the next question, grade an answer,
+// and complete an attempt (QuizSessionService, this file).
 package services
 
 import (
 	"arkana/features/quizzes/models"
 	"arkana/features/quizzes/queries"
+	dbpkg "arkana/shared/db"
 	"arkana/shared/idgen"
 	"database/sql"
 	"encoding/json"
@@ -43,6 +52,7 @@ type QuizSessionService struct {
 	queries queries.QuizSessionQueries
 }
 
+// NewQuizSessionService constructs a QuizSessionService backed by db.
 func NewQuizSessionService(db *sql.DB) *QuizSessionService {
 	return &QuizSessionService{db: db, queries: queries.NewSQLQuizSessionQueries(db)}
 }
@@ -70,7 +80,7 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 	// Resume before the CanAttempt gate - finishing an attempt already
 	// started must never be blocked by a future attempt-count limit.
 	existingID, existingUUID, err := s.queries.FindActiveAttempt(userID, moduleID)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", 0, err
 	}
 	if err == nil {
@@ -109,24 +119,21 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 		return "", 0, err
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return "", 0, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
+	err = dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
 
-	attemptID, err := qtx.InsertAttempt(uuid, moduleID, userID)
-	if err != nil {
-		return "", 0, err
-	}
-	for position, q := range chosen {
-		if err := qtx.InsertAttemptQuestion(attemptID, q.ID, position); err != nil {
-			return "", 0, err
+		attemptID, err := qtx.InsertAttempt(uuid, moduleID, userID)
+		if err != nil {
+			return err
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
+		for position, q := range chosen {
+			if err := qtx.InsertAttemptQuestion(attemptID, q.ID, position); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return "", 0, err
 	}
 	return uuid, len(chosen), nil
@@ -137,7 +144,7 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 // exactly one place that translates "not found" into ErrModuleNotFound.
 func (s *QuizSessionService) resolveModuleID(listSlug, moduleSlug string) (int, error) {
 	moduleID, err := s.queries.ResolveModuleID(listSlug, moduleSlug)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrModuleNotFound
 	}
 	if err != nil {
@@ -187,7 +194,7 @@ func (s *QuizSessionService) Availability(listSlug, moduleSlug string) (availabl
 // helper.
 func (s *QuizSessionService) getOwnedAttempt(userID int, attemptUUID string) (*attemptRow, error) {
 	attemptID, ownerID, completedAt, err := s.queries.GetAttemptByUUID(attemptUUID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrAttemptNotFound
 	}
 	if err != nil {
@@ -237,6 +244,9 @@ func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (questio
 	return q, answered, total, false, nil
 }
 
+// loadQuestionDelivery loads questionID's translated content for lang and
+// strips its explanation field (via stripExplanation) before returning it
+// as the correctness-stripped QuestionDelivery shape Next() serves.
 func (s *QuizSessionService) loadQuestionDelivery(questionID int, lang string) (*QuestionDelivery, error) {
 	uuid, qType, prompt, content, difficulty, err := s.queries.LoadQuestionDelivery(questionID, lang)
 	if err != nil {

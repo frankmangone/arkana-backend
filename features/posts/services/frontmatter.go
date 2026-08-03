@@ -41,6 +41,8 @@ func parseFrontmatter(raw string) (map[string]any, string, error) {
 	return frontmatter, body, nil
 }
 
+// frontmatterString returns the string value of key in fm, or "" if the key
+// is absent, nil, or not a string.
 func frontmatterString(fm map[string]any, key string) string {
 	v, ok := fm[key]
 	if !ok || v == nil {
@@ -50,6 +52,9 @@ func frontmatterString(fm map[string]any, key string) string {
 	return s
 }
 
+// frontmatterStringSlice returns the string elements of the list value of
+// key in fm, dropping any non-string elements, or nil if the key is absent,
+// nil, or not a list.
 func frontmatterStringSlice(fm map[string]any, key string) []string {
 	v, ok := fm[key]
 	if !ok || v == nil {
