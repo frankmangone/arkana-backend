@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"arkana/features/auth/models"
 	"arkana/features/auth/services"
+	"arkana/shared/httputil"
 	"encoding/json"
 	"net/http"
 )
@@ -17,25 +17,20 @@ func LogoutHandler(authService *services.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req LogoutRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid request format"})
+			httputil.WriteError(w, http.StatusBadRequest, "Invalid request format")
 			return
 		}
 
-		if err := models.ValidateRequest(req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: err.Error()})
+		if err := httputil.ValidateRequest(req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		if err := authService.RevokeRefreshToken(req.RefreshToken); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: err.Error()})
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
 	}
 }

@@ -1,4 +1,4 @@
-package models
+package httputil
 
 import (
 	"fmt"
@@ -7,13 +7,10 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-var validate *validator.Validate
-
-func init() {
-	validate = validator.New()
-}
+var validate = validator.New()
 
 // ValidateRequest validates a request struct and returns a formatted error message
+// that is safe to expose to API clients (never the raw go-playground/validator text).
 func ValidateRequest(req interface{}) error {
 	if err := validate.Struct(req); err != nil {
 		validationErrors, ok := err.(validator.ValidationErrors)

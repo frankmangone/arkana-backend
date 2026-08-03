@@ -3,6 +3,7 @@ package handlers
 import (
 	"arkana/features/auth/models"
 	"arkana/features/auth/services"
+	"arkana/shared/httputil"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -22,14 +23,12 @@ func GoogleTokenHandler(authService *services.AuthService, googleOAuthService *s
 		var req GoogleTokenRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			log.Printf("[Google OAuth] Error decoding request: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Invalid request format"})
+			httputil.WriteError(w, http.StatusBadRequest, "Invalid request format")
 			return
 		}
 
-		if err := models.ValidateRequest(req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: err.Error()})
+		if err := httputil.ValidateRequest(req); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -38,40 +37,34 @@ func GoogleTokenHandler(authService *services.AuthService, googleOAuthService *s
 		tokens, err := googleOAuthService.ExchangeCodeForTokens(ctx, req.Code, req.RedirectURI)
 		if err != nil {
 			log.Printf("[Google OAuth] Failed to exchange code: %v", err)
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to exchange authorization code"})
+			httputil.WriteError(w, http.StatusUnauthorized, "Failed to exchange authorization code")
 			return
 		}
 
 		googleUserInfo, err := googleOAuthService.VerifyIDToken(ctx, tokens.IDToken)
 		if err != nil {
 			log.Printf("[Google OAuth] Failed to verify ID token: %v", err)
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to verify ID token"})
+			httputil.WriteError(w, http.StatusUnauthorized, "Failed to verify ID token")
 			return
 		}
 
 		user, err := authService.FindOrCreateGoogleUser(googleUserInfo)
 		if err != nil {
 			log.Printf("[Google OAuth] Error finding/creating user: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to create or retrieve user"})
+			httputil.WriteError(w, http.StatusInternalServerError, "Failed to create or retrieve user")
 			return
 		}
 
 		accessToken, refreshToken, err := authService.GenerateTokensForUser(user)
 		if err != nil {
 			log.Printf("[Google OAuth] Failed to generate tokens: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(models.ErrorResponse{Error: "Failed to generate tokens"})
+			httputil.WriteError(w, http.StatusInternalServerError, "Failed to generate tokens")
 			return
 		}
 
 		log.Printf("[Google OAuth] Success for user: %s", user.Email)
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(models.AuthResponse{
+		httputil.WriteJSON(w, http.StatusOK, models.AuthResponse{
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
 			User:         user,

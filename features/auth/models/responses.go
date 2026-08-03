@@ -6,8 +6,3 @@ type AuthResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	User         *User  `json:"user"`
 }
-
-// ErrorResponse represents an error response
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
