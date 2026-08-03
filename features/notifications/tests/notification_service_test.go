@@ -193,4 +193,14 @@ func TestNotificationServiceMarkRead(t *testing.T) {
 			t.Errorf("err = %v, want ErrNotificationNotFound", err)
 		}
 	})
+
+	t.Run("marking an already-read notification again is a no-op success", func(t *testing.T) {
+		if err := svc.MarkRead(notifID, recipient); err != nil {
+			t.Fatalf("first MarkRead: %v", err)
+		}
+
+		if err := svc.MarkRead(notifID, recipient); err != nil {
+			t.Errorf("second MarkRead on an already-read notification: err = %v, want nil", err)
+		}
+	})
 }
