@@ -3,6 +3,7 @@ package services
 import (
 	"arkana/features/quizzes/models"
 	"arkana/features/quizzes/queries"
+	dbpkg "arkana/shared/db"
 	"arkana/shared/idgen"
 	"database/sql"
 	"encoding/json"
@@ -109,24 +110,21 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 		return "", 0, err
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return "", 0, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
+	err = dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
 
-	attemptID, err := qtx.InsertAttempt(uuid, moduleID, userID)
-	if err != nil {
-		return "", 0, err
-	}
-	for position, q := range chosen {
-		if err := qtx.InsertAttemptQuestion(attemptID, q.ID, position); err != nil {
-			return "", 0, err
+		attemptID, err := qtx.InsertAttempt(uuid, moduleID, userID)
+		if err != nil {
+			return err
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
+		for position, q := range chosen {
+			if err := qtx.InsertAttemptQuestion(attemptID, q.ID, position); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return "", 0, err
 	}
 	return uuid, len(chosen), nil

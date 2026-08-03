@@ -5,6 +5,7 @@ import (
 	notifservices "arkana/features/notifications/services"
 	"arkana/features/posts/models"
 	"arkana/features/posts/queries"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 	"errors"
 )
@@ -66,53 +67,53 @@ func (s *PostService) GetIDsByPaths(paths []string) (map[string]int, error) {
 // ToggleLike adds or removes a like for the given user on the given post.
 // On the unlike->like transition only, it notifies the post's writer (if
 // set) as part of the same transaction.
-func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int, err error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return false, 0, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
+func (s *PostService) ToggleLike(postID, userID int) (bool, int, error) {
+	var liked bool
+	var likeCount int
+	err := dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
 
-	exists, err := qtx.LikeExists(postID, userID)
-	if err != nil {
-		return false, 0, err
-	}
+		exists, err := qtx.LikeExists(postID, userID)
+		if err != nil {
+			return err
+		}
 
-	if !exists {
-		if err := qtx.InsertLike(postID, userID); err != nil {
-			return false, 0, err
-		}
-		if err := qtx.IncrementLikeCount(postID); err != nil {
-			return false, 0, err
-		}
-		liked = true
-
-		writerUserID, err := qtx.GetPostWriterUserID(postID)
-		if err != nil && err != sql.ErrNoRows {
-			return false, 0, err
-		}
-		if err == nil && writerUserID.Valid {
-			if err := s.notifications.Create(tx, int(writerUserID.Int64), userID, notifmodels.TypePostLiked, &postID, nil); err != nil {
-				return false, 0, err
+		if !exists {
+			if err := qtx.InsertLike(postID, userID); err != nil {
+				return err
 			}
-		}
-	} else {
-		if err := qtx.DeleteLike(postID, userID); err != nil {
-			return false, 0, err
-		}
-		if err := qtx.DecrementLikeCount(postID); err != nil {
-			return false, 0, err
-		}
-		liked = false
-	}
+			if err := qtx.IncrementLikeCount(postID); err != nil {
+				return err
+			}
+			liked = true
 
-	likeCount, err = qtx.GetLikeCount(postID)
+			writerUserID, err := qtx.GetPostWriterUserID(postID)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if err == nil && writerUserID.Valid {
+				if err := s.notifications.Create(tx, int(writerUserID.Int64), userID, notifmodels.TypePostLiked, &postID, nil); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err := qtx.DeleteLike(postID, userID); err != nil {
+				return err
+			}
+			if err := qtx.DecrementLikeCount(postID); err != nil {
+				return err
+			}
+			liked = false
+		}
+
+		count, err := qtx.GetLikeCount(postID)
+		if err != nil {
+			return err
+		}
+		likeCount = count
+		return nil
+	})
 	if err != nil {
-		return false, 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
 		return false, 0, err
 	}
 
@@ -120,32 +121,30 @@ func (s *PostService) ToggleLike(postID, userID int) (liked bool, likeCount int,
 }
 
 // ToggleRead marks a post as read/unread for the given user.
-func (s *PostService) ToggleRead(postID, userID int) (read bool, err error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
+func (s *PostService) ToggleRead(postID, userID int) (bool, error) {
+	var read bool
+	err := dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
 
-	exists, err := qtx.ReadExists(postID, userID)
-	if err != nil {
-		return false, err
-	}
-
-	if !exists {
-		if err := qtx.InsertRead(postID, userID); err != nil {
-			return false, err
+		exists, err := qtx.ReadExists(postID, userID)
+		if err != nil {
+			return err
 		}
-		read = true
-	} else {
-		if err := qtx.DeleteRead(postID, userID); err != nil {
-			return false, err
-		}
-		read = false
-	}
 
-	if err := tx.Commit(); err != nil {
+		if !exists {
+			if err := qtx.InsertRead(postID, userID); err != nil {
+				return err
+			}
+			read = true
+		} else {
+			if err := qtx.DeleteRead(postID, userID); err != nil {
+				return err
+			}
+			read = false
+		}
+		return nil
+	})
+	if err != nil {
 		return false, err
 	}
 

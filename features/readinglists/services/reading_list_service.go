@@ -3,6 +3,7 @@ package services
 import (
 	"arkana/features/readinglists/models"
 	"arkana/features/readinglists/queries"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -46,57 +47,54 @@ func (s *ReadingListService) Publish(p models.ReadingListPayload) error {
 		return fmt.Errorf("%w: %s", ErrUnknownPosts, strings.Join(missing, ", "))
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
+	return dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
 
-	if err := qtx.UpsertReadingList(p.Slug, p.CoverImage, p.Ongoing); err != nil {
-		return err
-	}
-	listID, err := qtx.GetReadingListIDBySlug(p.Slug)
-	if err != nil {
-		return err
-	}
-
-	if len(p.Translations) == 0 {
-		if err := qtx.DeleteAllTranslations(listID); err != nil {
+		if err := qtx.UpsertReadingList(p.Slug, p.CoverImage, p.Ongoing); err != nil {
 			return err
 		}
-	} else {
-		var langs []string
-		for lang := range p.Translations {
-			langs = append(langs, lang)
-		}
-		if err := qtx.DeleteTranslationsNotIn(listID, langs); err != nil {
-			return err
-		}
-	}
-
-	for lang, t := range p.Translations {
-		if err := qtx.UpsertTranslation(listID, lang, t.Title, t.Description); err != nil {
-			return err
-		}
-	}
-
-	if err := qtx.DeleteModuleTree(listID); err != nil {
-		return err
-	}
-	for _, m := range p.Modules {
-		moduleID, err := qtx.InsertModule(listID, m, m.Order)
+		listID, err := qtx.GetReadingListIDBySlug(p.Slug)
 		if err != nil {
 			return err
 		}
-		for _, item := range m.Items {
-			if err := qtx.InsertItem(moduleID, item); err != nil {
+
+		if len(p.Translations) == 0 {
+			if err := qtx.DeleteAllTranslations(listID); err != nil {
+				return err
+			}
+		} else {
+			var langs []string
+			for lang := range p.Translations {
+				langs = append(langs, lang)
+			}
+			if err := qtx.DeleteTranslationsNotIn(listID, langs); err != nil {
 				return err
 			}
 		}
-	}
 
-	return tx.Commit()
+		for lang, t := range p.Translations {
+			if err := qtx.UpsertTranslation(listID, lang, t.Title, t.Description); err != nil {
+				return err
+			}
+		}
+
+		if err := qtx.DeleteModuleTree(listID); err != nil {
+			return err
+		}
+		for _, m := range p.Modules {
+			moduleID, err := qtx.InsertModule(listID, m, m.Order)
+			if err != nil {
+				return err
+			}
+			for _, item := range m.Items {
+				if err := qtx.InsertItem(moduleID, item); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // ListAll returns every reading list, fully nested, for the admin CI pull.

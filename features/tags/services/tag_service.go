@@ -3,6 +3,7 @@ package services
 import (
 	"arkana/features/tags/models"
 	"arkana/features/tags/queries"
+	dbpkg "arkana/shared/db"
 	"database/sql"
 )
 
@@ -20,19 +21,17 @@ func NewTagService(db *sql.DB) *TagService {
 // payloads is left untouched, never deleted, so removing a tag from the
 // source file can never orphan a post that still references it.
 func (s *TagService) Sync(payloads []models.TagPayload) (int, error) {
-	tx, err := s.db.Begin()
+	var n int
+	err := dbpkg.Transact(s.db, func(tx *sql.Tx) error {
+		qtx := s.queries.WithTx(tx)
+		synced, err := qtx.Sync(payloads)
+		if err != nil {
+			return err
+		}
+		n = synced
+		return nil
+	})
 	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	qtx := s.queries.WithTx(tx)
-	n, err := qtx.Sync(payloads)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return n, nil
