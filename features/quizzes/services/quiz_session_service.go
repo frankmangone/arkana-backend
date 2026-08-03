@@ -11,11 +11,13 @@ package services
 import (
 	"arkana/features/quizzes/models"
 	"arkana/features/quizzes/queries"
-	dbpkg "arkana/shared/db"
 	"arkana/shared/idgen"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // questionsPerAttempt and passThreshold are deliberate implementation
@@ -43,18 +45,19 @@ type QuestionDelivery struct {
 }
 
 type attemptRow struct {
-	ID          int
-	CompletedAt sql.NullTime
+	UUID        string
+	CompletedAt *time.Time
 }
 
 type QuizSessionService struct {
-	db      *sql.DB
 	queries queries.QuizSessionQueries
 }
 
-// NewQuizSessionService constructs a QuizSessionService backed by db.
-func NewQuizSessionService(db *sql.DB) *QuizSessionService {
-	return &QuizSessionService{db: db, queries: queries.NewSQLQuizSessionQueries(db)}
+// NewQuizSessionService constructs a QuizSessionService. db serves the
+// question bank and reading-list joins; redisClient serves attempt/session
+// state.
+func NewQuizSessionService(db *sql.DB, redisClient *redis.Client) *QuizSessionService {
+	return &QuizSessionService{queries: queries.NewRedisQuizSessionQueries(db, redisClient)}
 }
 
 // CanAttempt is a monetization gating stub (quiz_spec.md requirement
@@ -79,12 +82,12 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 
 	// Resume before the CanAttempt gate - finishing an attempt already
 	// started must never be blocked by a future attempt-count limit.
-	existingID, existingUUID, err := s.queries.FindActiveAttempt(userID, moduleID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	existingUUID, err := s.queries.FindActiveAttemptUUID(userID, moduleID)
+	if err != nil && !errors.Is(err, queries.ErrNotFound) {
 		return "", 0, err
 	}
 	if err == nil {
-		total, err := s.queries.TotalQuestions(existingID)
+		total, err := s.queries.TotalQuestions(existingUUID)
 		if err != nil {
 			return "", 0, err
 		}
@@ -119,21 +122,11 @@ func (s *QuizSessionService) Start(userID int, listSlug, moduleSlug string) (att
 		return "", 0, err
 	}
 
-	err = dbpkg.Transact(s.db, func(tx *sql.Tx) error {
-		qtx := s.queries.WithTx(tx)
-
-		attemptID, err := qtx.InsertAttempt(uuid, moduleID, userID)
-		if err != nil {
-			return err
-		}
-		for position, q := range chosen {
-			if err := qtx.InsertAttemptQuestion(attemptID, q.ID, position); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
+	questionOrder := make([]int, len(chosen))
+	for i, q := range chosen {
+		questionOrder[i] = q.ID
+	}
+	if err := s.queries.CreateAttempt(uuid, moduleID, userID, questionOrder); err != nil {
 		return "", 0, err
 	}
 	return uuid, len(chosen), nil
@@ -193,8 +186,8 @@ func (s *QuizSessionService) Availability(listSlug, moduleSlug string) (availabl
 // substitute for this check. Tasks 6-7 (Answer/Complete) call this same
 // helper.
 func (s *QuizSessionService) getOwnedAttempt(userID int, attemptUUID string) (*attemptRow, error) {
-	attemptID, ownerID, completedAt, err := s.queries.GetAttemptByUUID(attemptUUID)
-	if errors.Is(err, sql.ErrNoRows) {
+	ownerID, completedAt, err := s.queries.GetAttemptMeta(attemptUUID)
+	if errors.Is(err, queries.ErrNotFound) {
 		return nil, ErrAttemptNotFound
 	}
 	if err != nil {
@@ -203,7 +196,7 @@ func (s *QuizSessionService) getOwnedAttempt(userID int, attemptUUID string) (*a
 	if ownerID != userID {
 		return nil, ErrAttemptForbidden
 	}
-	return &attemptRow{ID: attemptID, CompletedAt: completedAt}, nil
+	return &attemptRow{UUID: attemptUUID, CompletedAt: completedAt}, nil
 }
 
 // Next returns the question at the attempt's current position (however
@@ -216,15 +209,15 @@ func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (questio
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
-	if attempt.CompletedAt.Valid {
+	if attempt.CompletedAt != nil {
 		return nil, 0, 0, false, ErrAttemptCompleted
 	}
 
-	total, err = s.queries.TotalQuestions(attempt.ID)
+	total, err = s.queries.TotalQuestions(attempt.UUID)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
-	answered, err := s.queries.AnsweredCount(attempt.ID)
+	answered, err := s.queries.AnsweredCount(attempt.UUID)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
@@ -232,7 +225,7 @@ func (s *QuizSessionService) Next(userID int, attemptUUID, lang string) (questio
 		return nil, answered, total, true, nil
 	}
 
-	questionID, err := s.queries.QuestionIDAtPosition(attempt.ID, answered)
+	questionID, err := s.queries.QuestionIDAtPosition(attempt.UUID, answered)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
@@ -300,15 +293,15 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 	if err != nil {
 		return nil, err
 	}
-	if attempt.CompletedAt.Valid {
+	if attempt.CompletedAt != nil {
 		return nil, ErrAttemptCompleted
 	}
 
-	answered, err := s.queries.AnsweredCount(attempt.ID)
+	answered, err := s.queries.AnsweredCount(attempt.UUID)
 	if err != nil {
 		return nil, err
 	}
-	total, err := s.queries.TotalQuestions(attempt.ID)
+	total, err := s.queries.TotalQuestions(attempt.UUID)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +309,7 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 		return nil, ErrAttemptCompleted
 	}
 
-	questionID, questionUUIDAtPosition, qType, answerKey, err := s.queries.QuestionAtPosition(attempt.ID, answered)
+	questionID, questionUUIDAtPosition, qType, answerKey, err := s.queries.QuestionAtPosition(attempt.UUID, answered)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +338,7 @@ func (s *QuizSessionService) Answer(userID int, attemptUUID, questionUUID string
 		}
 	}
 
-	if err := s.queries.InsertAnswer(attempt.ID, questionID, string(responseToStore), correct, skipped); err != nil {
+	if err := s.queries.RecordAnswer(attempt.UUID, questionID, string(responseToStore), correct, skipped); err != nil {
 		return nil, err
 	}
 
@@ -406,15 +399,15 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 	if err != nil {
 		return nil, err
 	}
-	if attempt.CompletedAt.Valid {
+	if attempt.CompletedAt != nil {
 		return nil, ErrAttemptCompleted
 	}
 
-	total, err := s.queries.TotalQuestions(attempt.ID)
+	total, err := s.queries.TotalQuestions(attempt.UUID)
 	if err != nil {
 		return nil, err
 	}
-	answered, err := s.queries.AnsweredCount(attempt.ID)
+	answered, err := s.queries.AnsweredCount(attempt.UUID)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +415,7 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 		return nil, ErrAttemptIncomplete
 	}
 
-	correctCount, err := s.queries.CountCorrectAnswers(attempt.ID)
+	correctCount, err := s.queries.CountCorrectAnswers(attempt.UUID)
 	if err != nil {
 		return nil, err
 	}
@@ -434,11 +427,11 @@ func (s *QuizSessionService) Complete(userID int, attemptUUID string) (*Complete
 		passed = float64(correctCount)/float64(total) >= passThreshold
 	}
 
-	if err := s.queries.MarkAttemptCompleted(attempt.ID, score, passed); err != nil {
+	if err := s.queries.MarkAttemptCompleted(attempt.UUID, score, passed); err != nil {
 		return nil, err
 	}
 
-	reviewPaths, err := s.queries.ReviewPostPaths(attempt.ID)
+	reviewPaths, err := s.queries.ReviewPostPaths(attempt.UUID)
 	if err != nil {
 		return nil, err
 	}

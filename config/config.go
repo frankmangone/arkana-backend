@@ -26,6 +26,9 @@ type Config struct {
 	MeiliHost      string `env:"MEILI_HOST"`
 	MeiliMasterKey string `env:"MEILI_MASTER_KEY"`
 
+	// Redis - quiz attempt/session state (ephemeral, TTL-bound)
+	RedisAddr string `env:"REDIS_ADDR"`
+
 	// Email subscriptions
 	FrontendURL             string `env:"FRONTEND_URL"`
 	ResendAPIKey            string `env:"RESEND_API_KEY"`
@@ -50,6 +53,8 @@ func Load() *Config {
 
 		MeiliHost:      getEnv("MEILI_HOST", "http://localhost:7700"),
 		MeiliMasterKey: getEnv("MEILI_MASTER_KEY", ""),
+
+		RedisAddr: getEnv("REDIS_ADDR", "localhost:3334"),
 
 		FrontendURL:             getEnv("FRONTEND_URL", "http://localhost:5173"),
 		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),

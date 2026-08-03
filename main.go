@@ -11,6 +11,7 @@ import (
 
 	"arkana/config"
 	"arkana/router"
+	"arkana/shared/rediscache"
 
 	"github.com/pressly/goose/v3"
 )
@@ -31,6 +32,13 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize Redis (ephemeral quiz attempt/session state)
+	redisClient, err := rediscache.NewClient(cfg.RedisAddr)
+	if err != nil {
+		log.Fatal("Failed to initialize Redis client:", err)
+	}
+	defer redisClient.Close()
+
 	// Run migrations
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		log.Fatal("Failed to set migration dialect:", err)
@@ -40,7 +48,7 @@ func main() {
 	}
 
 	// Setup router with all routes
-	r := router.Setup(db, cfg)
+	r := router.Setup(db, cfg, redisClient)
 
 	srv := &http.Server{
 		Addr:              ":8082",
