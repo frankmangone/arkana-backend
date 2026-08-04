@@ -59,7 +59,7 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Println(fmt.Sprintf("Server listening on :%s", cfg.ApiPort))
+		log.Printf("Server listening on :%s", cfg.ApiPort)
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
