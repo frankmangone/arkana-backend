@@ -9,6 +9,7 @@ import (
 
 // Config holds application configuration
 type Config struct {
+	ApiPort           string `env:"API_PORT"`
 	DatabasePath      string `validate:"required" env:"DATABASE_PATH"`
 	CORSAllowedOrigin string `env:"CORS_ALLOWED_ORIGIN"`
 
@@ -26,6 +27,9 @@ type Config struct {
 	MeiliHost      string `env:"MEILI_HOST"`
 	MeiliMasterKey string `env:"MEILI_MASTER_KEY"`
 
+	// Redis - quiz attempt/session state (ephemeral, TTL-bound)
+	RedisAddr string `env:"REDIS_ADDR"`
+
 	// Email subscriptions
 	FrontendURL             string `env:"FRONTEND_URL"`
 	ResendAPIKey            string `env:"RESEND_API_KEY"`
@@ -37,6 +41,7 @@ type Config struct {
 // Load loads configuration from environment variables
 func Load() *Config {
 	return &Config{
+		ApiPort:           getEnv("API_PORT", "8082"),
 		DatabasePath:      getEnv("DATABASE_PATH", "blog.db"),
 		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", "*"),
 
@@ -50,6 +55,8 @@ func Load() *Config {
 
 		MeiliHost:      getEnv("MEILI_HOST", "http://localhost:7700"),
 		MeiliMasterKey: getEnv("MEILI_MASTER_KEY", ""),
+
+		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 
 		FrontendURL:             getEnv("FRONTEND_URL", "http://localhost:5173"),
 		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),

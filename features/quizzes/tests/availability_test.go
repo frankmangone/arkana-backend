@@ -17,7 +17,7 @@ import (
 func TestAvailabilityService(t *testing.T) {
 	t.Run("unknown module returns ErrModuleNotFound", func(t *testing.T) {
 		db := setupTestDB(t)
-		sessions := services.NewQuizSessionService(db)
+		sessions := services.NewQuizSessionService(db, setupTestRedis(t))
 
 		_, _, err := sessions.Availability("no-such-list", "no-such-module")
 		if err != services.ErrModuleNotFound {
@@ -27,7 +27,7 @@ func TestAvailabilityService(t *testing.T) {
 
 	t.Run("module with no questions is unavailable", func(t *testing.T) {
 		db := setupTestDB(t)
-		sessions := services.NewQuizSessionService(db)
+		sessions := services.NewQuizSessionService(db, setupTestRedis(t))
 		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
 
 		available, languages, err := sessions.Availability("blockchain-101", "bitcoin-and-fundamentals")
@@ -44,7 +44,7 @@ func TestAvailabilityService(t *testing.T) {
 
 	t.Run("only languages with full coverage over the pool are reported", func(t *testing.T) {
 		db := setupTestDB(t)
-		sessions := services.NewQuizSessionService(db)
+		sessions := services.NewQuizSessionService(db, setupTestRedis(t))
 		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
 		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
 
@@ -73,7 +73,7 @@ func TestAvailabilityService(t *testing.T) {
 
 	t.Run("fully translated pool reports every language", func(t *testing.T) {
 		db := setupTestDB(t)
-		sessions := services.NewQuizSessionService(db)
+		sessions := services.NewQuizSessionService(db, setupTestRedis(t))
 		insertTestModule(t, db, "blockchain-101", "bitcoin-and-fundamentals", "how-it-all-began", "blockchain-101/how-it-all-began")
 		postID := insertTestPost(t, db, "blockchain-101/how-it-all-began")
 

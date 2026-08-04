@@ -1,13 +1,17 @@
 package tests
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
 	authsvc "arkana/features/auth/services"
 
+	"github.com/alicebob/miniredis/v2"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/redis/go-redis/v9"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -90,33 +94,6 @@ func setupTestDB(t *testing.T) *sql.DB {
 			question_id INTEGER NOT NULL REFERENCES questions(id),
 			post_id INTEGER NOT NULL REFERENCES posts(id),
 			PRIMARY KEY (question_id, post_id)
-		);
-		CREATE TABLE quiz_attempts (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			uuid TEXT UNIQUE NOT NULL,
-			module_id INTEGER NOT NULL REFERENCES reading_list_modules(id),
-			user_id INTEGER NOT NULL REFERENCES users(id),
-			tier TEXT NOT NULL DEFAULT 'standard',
-			started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			completed_at TIMESTAMP,
-			score INTEGER,
-			passed BOOLEAN
-		);
-		CREATE TABLE quiz_attempt_questions (
-			attempt_id INTEGER NOT NULL REFERENCES quiz_attempts(id),
-			question_id INTEGER NOT NULL REFERENCES questions(id),
-			position INTEGER NOT NULL,
-			PRIMARY KEY (attempt_id, position)
-		);
-		CREATE TABLE quiz_attempt_answers (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			attempt_id INTEGER NOT NULL REFERENCES quiz_attempts(id),
-			question_id INTEGER NOT NULL REFERENCES questions(id),
-			response TEXT NOT NULL,
-			correct BOOLEAN NOT NULL,
-			skipped BOOLEAN NOT NULL DEFAULT 0,
-			answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE (attempt_id, question_id)
 		);
 	`)
 	if err != nil {
@@ -271,4 +248,36 @@ func insertTestQuestionTranslation(t *testing.T, db *sql.DB, questionID int, lan
 	); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// setupTestRedis spins up an in-memory miniredis instance and returns a
+// real *redis.Client pointed at it - every quiz session test needing
+// Redis-backed attempt state uses this instead of a real Redis server.
+func setupTestRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
+}
+
+// redisAttemptFixture mirrors the subset of RedisQuizSessionQueries's
+// internal attempt JSON shape that tests need to assert on directly - a
+// deliberate black-box duplication (matching the wire tags, not the
+// unexported type) rather than reaching into package queries' internals.
+type redisAttemptFixture struct {
+	ModuleID  int   `json:"module_id"`
+	UserID    int   `json:"user_id"`
+	Questions []int `json:"questions"`
+}
+
+func getRedisAttempt(t *testing.T, redisClient *redis.Client, attemptUUID string) redisAttemptFixture {
+	t.Helper()
+	data, err := redisClient.Get(context.Background(), "quiz:attempt:"+attemptUUID).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture redisAttemptFixture
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
 }

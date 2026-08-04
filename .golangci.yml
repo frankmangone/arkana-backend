@@ -28,6 +28,7 @@ linters:
         - (*database/sql.Rows).Close
         - (*database/sql.DB).Close
         - (*database/sql.Tx).Rollback
+        - (*github.com/redis/go-redis/v9.Client).Close
         # Writing an error/JSON response to the client: nothing actionable
         # if the write itself fails partway through.
         - (*encoding/json.Encoder).Encode

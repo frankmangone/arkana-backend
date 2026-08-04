@@ -1,48 +1,389 @@
 package queries
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+
 	"arkana/features/quizzes/models"
 	dbpkg "arkana/shared/db"
-	"database/sql"
+
+	"github.com/redis/go-redis/v9"
 )
 
+// ErrNotFound is the not-found sentinel for every attempt-related lookup -
+// today's equivalent of sql.ErrNoRows, since attempt state now lives in
+// Redis (redis.Nil) rather than SQL. Bank reads (ResolveModuleID, etc.)
+// still return sql.ErrNoRows directly, unchanged.
+var ErrNotFound = errors.New("not found")
+
+// QuizSessionQueries is implemented by RedisQuizSessionQueries. Bank/
+// reading-list reads are pure SQL; attempt/session state reads and writes
+// are Redis-backed - see RedisQuizSessionQueries's doc comment.
 type QuizSessionQueries interface {
+	// Bank / reading-list reads - pure SQL, unchanged from before this
+	// feature moved to Redis.
 	ResolveModuleID(listSlug, moduleSlug string) (int, error)
-	FindActiveAttempt(userID, moduleID int) (attemptID int, attemptUUID string, err error)
 	QuestionPool(moduleID int) ([]models.Question, error)
 	LanguagesWithFullCoverage(questionIDs []int) ([]string, error)
-	InsertAttempt(uuid string, moduleID, userID int) (int64, error)
-	InsertAttemptQuestion(attemptID int64, questionID, position int) error
-	GetAttemptByUUID(attemptUUID string) (attemptID, ownerID int, completedAt sql.NullTime, err error)
-	TotalQuestions(attemptID int) (int, error)
-	AnsweredCount(attemptID int) (int, error)
-	QuestionIDAtPosition(attemptID, position int) (int, error)
 	LoadQuestionDelivery(questionID int, lang string) (uuid, qType, prompt, content string, difficulty int, err error)
-	QuestionAtPosition(attemptID, position int) (questionID int, questionUUID, qType, answerKey string, err error)
-	InsertAnswer(attemptID, questionID int, response string, correct, skipped bool) error
 	ReinforcementContent(questionID int, lang string) (string, error)
 	ReinforcementPostPaths(questionID int) ([]string, error)
-	CountCorrectAnswers(attemptID int) (int, error)
-	MarkAttemptCompleted(attemptID int, score int, passed bool) error
-	ReviewPostPaths(attemptID int) ([]string, error)
-	WithTx(tx *sql.Tx) QuizSessionQueries
+
+	// Attempt/session state - Redis-backed, keyed by attempt uuid (Redis
+	// has no autoincrement id, and the uuid was already the only
+	// identifier ever exposed publicly).
+	FindActiveAttemptUUID(userID, moduleID int) (string, error)
+	CreateAttempt(uuid string, moduleID, userID int, questionOrder []int) error
+	GetAttemptMeta(attemptUUID string) (ownerID int, completedAt *time.Time, err error)
+	TotalQuestions(attemptUUID string) (int, error)
+	AnsweredCount(attemptUUID string) (int, error)
+	QuestionIDAtPosition(attemptUUID string, position int) (int, error)
+	QuestionAtPosition(attemptUUID string, position int) (questionID int, questionUUID, qType, answerKey string, err error)
+	RecordAnswer(attemptUUID string, questionID int, response string, correct, skipped bool) error
+	CountCorrectAnswers(attemptUUID string) (int, error)
+	MarkAttemptCompleted(attemptUUID string, score int, passed bool) error
+	ReviewPostPaths(attemptUUID string) ([]string, error)
 }
 
-type SQLQuizSessionQueries struct {
-	db dbpkg.DBTX
+// RedisQuizSessionQueries is a hybrid: db serves the question bank and
+// reading-list joins (unchanged, persistent content), redisClient serves
+// attempt/session state (ephemeral, TTL-bound). See
+// docs/superpowers/specs/2026-08-03-quiz-attempts-redis-design.md.
+type RedisQuizSessionQueries struct {
+	db          *sql.DB
+	redisClient *redis.Client
 }
 
-func NewSQLQuizSessionQueries(db dbpkg.DBTX) *SQLQuizSessionQueries {
-	return &SQLQuizSessionQueries{db: db}
+// NewRedisQuizSessionQueries constructs a RedisQuizSessionQueries. db
+// first, matching this codebase's constructor convention.
+func NewRedisQuizSessionQueries(db *sql.DB, redisClient *redis.Client) *RedisQuizSessionQueries {
+	return &RedisQuizSessionQueries{db: db, redisClient: redisClient}
 }
 
-func (q *SQLQuizSessionQueries) WithTx(tx *sql.Tx) QuizSessionQueries {
-	return NewSQLQuizSessionQueries(tx)
+// attemptTTL is the sliding TTL for all attempt-related Redis keys - reset
+// on every read or write, including read-only calls (see the load/save
+// helpers below). Two hours is generous for a distracted/interrupted
+// session while still cleaning up same-day.
+const attemptTTL = 2 * time.Hour
+
+func attemptKey(uuid string) string {
+	return "quiz:attempt:" + uuid
 }
+
+func activeAttemptKey(userID, moduleID int) string {
+	return fmt.Sprintf("quiz:active-attempt:%d:%d", userID, moduleID)
+}
+
+// redisAttempt is the whole-attempt JSON blob stored at attemptKey(uuid).
+// encoding/json handles the int-keyed Answers map natively (stringifying
+// keys on marshal, parsing back to int on unmarshal).
+type redisAttempt struct {
+	UUID        string              `json:"uuid"`
+	ModuleID    int                 `json:"module_id"`
+	UserID      int                 `json:"user_id"`
+	Tier        string              `json:"tier"`
+	StartedAt   time.Time           `json:"started_at"`
+	CompletedAt *time.Time          `json:"completed_at,omitempty"`
+	Score       *int                `json:"score,omitempty"`
+	Passed      *bool               `json:"passed,omitempty"`
+	Questions   []int               `json:"questions"` // position -> question_id, set once at CreateAttempt
+	Answers     map[int]redisAnswer `json:"answers"`   // question_id -> answer
+}
+
+// redisAnswer records one graded (or skipped) answer. AnsweredAt gives
+// ReviewPostPaths (Task 5) a chronological order to walk missed answers
+// in, since a Go map has none - the same role quiz_attempt_answers.id's
+// insertion order played in SQL.
+type redisAnswer struct {
+	Response   string    `json:"response"`
+	Correct    bool      `json:"correct"`
+	Skipped    bool      `json:"skipped"`
+	AnsweredAt time.Time `json:"answered_at"`
+}
+
+// load fetches and decodes an attempt blob, sliding both its own TTL and
+// its paired resume index's TTL forward - read paths advance the TTL
+// exactly like write paths do, per this feature's TTL policy (both keys
+// always carry the same TTL, refreshed uniformly on reads and writes).
+func (q *RedisQuizSessionQueries) load(attemptUUID string) (*redisAttempt, error) {
+	ctx := context.Background()
+	data, err := q.redisClient.Get(ctx, attemptKey(attemptUUID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var attempt redisAttempt
+	if err := json.Unmarshal(data, &attempt); err != nil {
+		return nil, err
+	}
+
+	pipe := q.redisClient.TxPipeline()
+	pipe.Expire(ctx, attemptKey(attemptUUID), attemptTTL)
+	pipe.Expire(ctx, activeAttemptKey(attempt.UserID, attempt.ModuleID), attemptTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	return &attempt, nil
+}
+
+// save re-serializes and writes an attempt blob back, refreshing both its
+// own TTL and its paired resume index's TTL - write paths must slide both
+// keys' TTLs forward exactly like load does, per this feature's TTL policy
+// (both keys always carry the same TTL, refreshed uniformly on reads and
+// writes).
+func (q *RedisQuizSessionQueries) save(attempt *redisAttempt) error {
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	pipe := q.redisClient.TxPipeline()
+	pipe.Set(ctx, attemptKey(attempt.UUID), data, attemptTTL)
+	pipe.Expire(ctx, activeAttemptKey(attempt.UserID, attempt.ModuleID), attemptTTL)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// CreateAttempt writes a brand-new attempt's blob and its resume index in
+// one Redis pipeline (MULTI/EXEC), so there's no window where one key
+// exists without the other.
+func (q *RedisQuizSessionQueries) CreateAttempt(uuid string, moduleID, userID int, questionOrder []int) error {
+	attempt := &redisAttempt{
+		UUID:      uuid,
+		ModuleID:  moduleID,
+		UserID:    userID,
+		Tier:      "standard",
+		StartedAt: time.Now(),
+		Questions: questionOrder,
+		Answers:   map[int]redisAnswer{},
+	}
+	data, err := json.Marshal(attempt)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	pipe := q.redisClient.TxPipeline()
+	pipe.Set(ctx, attemptKey(uuid), data, attemptTTL)
+	pipe.Set(ctx, activeAttemptKey(userID, moduleID), uuid, attemptTTL)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// FindActiveAttemptUUID looks up the resume index for a user/module pair.
+// It authoritatively loads the attempt blob itself before trusting the
+// index - this guards two cases, not just one: the blob having expired out
+// from under a still-live index (the index outlived the blob by a beat),
+// and the blob being present but already completed. The latter matters
+// because MarkAttemptCompleted's index-key Del is best-effort cleanup, not
+// the source of truth - if that Del ever fails (a transient Redis error
+// after the completed blob was already saved), this load-and-check is what
+// still refuses to hand back a completed attempt as "active", so Start
+// never resumes-forever a finished attempt. Either way - blob gone, or
+// blob completed - this is treated as "no active attempt" so Start begins
+// a fresh one. load() already refreshes both this key's and the blob
+// key's TTL on a successful load, so no separate TTL-refresh pipeline is
+// needed here.
+func (q *RedisQuizSessionQueries) FindActiveAttemptUUID(userID, moduleID int) (string, error) {
+	ctx := context.Background()
+	uuid, err := q.redisClient.Get(ctx, activeAttemptKey(userID, moduleID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+
+	attempt, err := q.load(uuid)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if attempt.CompletedAt != nil {
+		return "", ErrNotFound
+	}
+	return uuid, nil
+}
+
+// GetAttemptMeta returns the two fields getOwnedAttempt needs: who owns
+// this attempt, and whether it's already completed.
+func (q *RedisQuizSessionQueries) GetAttemptMeta(attemptUUID string) (ownerID int, completedAt *time.Time, err error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return attempt.UserID, attempt.CompletedAt, nil
+}
+
+// TotalQuestions returns how many questions an attempt's pick-order has.
+func (q *RedisQuizSessionQueries) TotalQuestions(attemptUUID string) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	return len(attempt.Questions), nil
+}
+
+// AnsweredCount returns how many questions an attempt has answered or
+// skipped.
+func (q *RedisQuizSessionQueries) AnsweredCount(attemptUUID string) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	return len(attempt.Answers), nil
+}
+
+// QuestionIDAtPosition returns the question_id at a given position in an
+// attempt's pick-order.
+func (q *RedisQuizSessionQueries) QuestionIDAtPosition(attemptUUID string, position int) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	if position < 0 || position >= len(attempt.Questions) {
+		return 0, ErrNotFound
+	}
+	return attempt.Questions[position], nil
+}
+
+// QuestionAtPosition returns the question at an attempt's given position,
+// for answer validation - the question id/order comes from Redis, the
+// uuid/type/answer_key come from the (unchanged) SQL question bank.
+func (q *RedisQuizSessionQueries) QuestionAtPosition(attemptUUID string, position int) (questionID int, questionUUID, qType, answerKey string, err error) {
+	questionID, err = q.QuestionIDAtPosition(attemptUUID, position)
+	if err != nil {
+		return 0, "", "", "", err
+	}
+	err = q.db.QueryRow(
+		"SELECT uuid, type, answer_key FROM questions WHERE id = ?", questionID,
+	).Scan(&questionUUID, &qType, &answerKey)
+	return
+}
+
+// RecordAnswer stores a graded (or skipped) answer against a question in
+// the attempt's Answers map.
+func (q *RedisQuizSessionQueries) RecordAnswer(attemptUUID string, questionID int, response string, correct, skipped bool) error {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return err
+	}
+	if attempt.Answers == nil {
+		attempt.Answers = map[int]redisAnswer{}
+	}
+	attempt.Answers[questionID] = redisAnswer{
+		Response:   response,
+		Correct:    correct,
+		Skipped:    skipped,
+		AnsweredAt: time.Now(),
+	}
+	return q.save(attempt)
+}
+
+// CountCorrectAnswers returns how many of an attempt's answers were correct.
+func (q *RedisQuizSessionQueries) CountCorrectAnswers(attemptUUID string) (int, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, a := range attempt.Answers {
+		if a.Correct {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// MarkAttemptCompleted finalizes an attempt's score, and removes its resume
+// index so a completed attempt is never handed back by
+// FindActiveAttemptUUID a beat sooner than it has to be. This Del is now a
+// pure tidiness optimization, not the authoritative guard: FindActiveAttemptUUID
+// loads the full blob and checks CompletedAt itself, so even if this Del
+// fails (e.g. a transient Redis error right after save() succeeded), a
+// completed attempt still can never be resumed - it just means the stale
+// index key lingers a little longer until its TTL expires, instead of
+// disappearing immediately. The attempt blob itself is left alone here -
+// it still just expires normally via TTL (sliding forward on reads/writes
+// like any other attempt data), since only the "is there an active
+// attempt" pointer needs to disappear immediately.
+func (q *RedisQuizSessionQueries) MarkAttemptCompleted(attemptUUID string, score int, passed bool) error {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	attempt.CompletedAt = &now
+	attempt.Score = &score
+	attempt.Passed = &passed
+	if err := q.save(attempt); err != nil {
+		return err
+	}
+	return q.redisClient.Del(context.Background(), activeAttemptKey(attempt.UserID, attempt.ModuleID)).Err()
+}
+
+// ReviewPostPaths aggregates the reinforcement posts of every missed
+// (wrong or skipped) answer in an attempt, deduped, ordered by when the
+// miss happened (AnsweredAt stands in for quiz_attempt_answers.id's
+// insertion order, since a Go map has no iteration order of its own).
+func (q *RedisQuizSessionQueries) ReviewPostPaths(attemptUUID string) ([]string, error) {
+	attempt, err := q.load(attemptUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	type missed struct {
+		questionID int
+		answeredAt time.Time
+	}
+	var missedList []missed
+	for qid, a := range attempt.Answers {
+		if !a.Correct {
+			missedList = append(missedList, missed{questionID: qid, answeredAt: a.AnsweredAt})
+		}
+	}
+	sort.Slice(missedList, func(i, j int) bool {
+		return missedList[i].answeredAt.Before(missedList[j].answeredAt)
+	})
+
+	seen := map[string]bool{}
+	var paths []string
+	for _, m := range missedList {
+		questionPaths, err := q.ReinforcementPostPaths(m.questionID)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range questionPaths {
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths, nil
+}
+
+// Compile-time check that RedisQuizSessionQueries satisfies
+// QuizSessionQueries in full - this is the first task where every
+// interface method exists, so this is where the assertion is added (it
+// would fail to compile in Tasks 2-4, where the struct is deliberately
+// incomplete).
+var _ QuizSessionQueries = (*RedisQuizSessionQueries)(nil)
 
 // ResolveModuleID looks up a reading_list_modules.id from its public
 // listSlug/moduleSlug pair. Returns sql.ErrNoRows (unmodified) if not found.
-func (q *SQLQuizSessionQueries) ResolveModuleID(listSlug, moduleSlug string) (int, error) {
+func (q *RedisQuizSessionQueries) ResolveModuleID(listSlug, moduleSlug string) (int, error) {
 	var moduleID int
 	err := q.db.QueryRow(`
 		SELECT rlm.id FROM reading_list_modules rlm
@@ -52,22 +393,10 @@ func (q *SQLQuizSessionQueries) ResolveModuleID(listSlug, moduleSlug string) (in
 	return moduleID, err
 }
 
-// FindActiveAttempt returns the most recent in-progress attempt for a
-// user/module pair, if any. Returns sql.ErrNoRows (unmodified) if there
-// is none.
-func (q *SQLQuizSessionQueries) FindActiveAttempt(userID, moduleID int) (attemptID int, attemptUUID string, err error) {
-	err = q.db.QueryRow(`
-		SELECT id, uuid FROM quiz_attempts
-		WHERE user_id = ? AND module_id = ? AND completed_at IS NULL
-		ORDER BY id DESC LIMIT 1
-	`, userID, moduleID).Scan(&attemptID, &attemptUUID)
-	return
-}
-
 // QuestionPool assembles every question linked (via question_posts) to a
 // post referenced by any item in this module - the "quiz" for a module is
 // this query, not a stored entity.
-func (q *SQLQuizSessionQueries) QuestionPool(moduleID int) ([]models.Question, error) {
+func (q *RedisQuizSessionQueries) QuestionPool(moduleID int) ([]models.Question, error) {
 	rows, err := q.db.Query(`
 		SELECT DISTINCT q.id, q.uuid, q.type, q.difficulty, q.answer_key
 		FROM questions q
@@ -96,7 +425,7 @@ func (q *SQLQuizSessionQueries) QuestionPool(moduleID int) ([]models.Question, e
 
 // LanguagesWithFullCoverage returns every lang that has a
 // question_translations row for all of questionIDs.
-func (q *SQLQuizSessionQueries) LanguagesWithFullCoverage(questionIDs []int) ([]string, error) {
+func (q *RedisQuizSessionQueries) LanguagesWithFullCoverage(questionIDs []int) ([]string, error) {
 	query := `
 		SELECT lang FROM question_translations
 		WHERE question_id IN (` + dbpkg.Placeholders(len(questionIDs)) + `)
@@ -120,64 +449,9 @@ func (q *SQLQuizSessionQueries) LanguagesWithFullCoverage(questionIDs []int) ([]
 	return languages, rows.Err()
 }
 
-// InsertAttempt creates a new quiz_attempts row and returns its id.
-func (q *SQLQuizSessionQueries) InsertAttempt(uuid string, moduleID, userID int) (int64, error) {
-	result, err := q.db.Exec(`INSERT INTO quiz_attempts (uuid, module_id, user_id) VALUES (?, ?, ?)`, uuid, moduleID, userID)
-	if err != nil {
-		return 0, err
-	}
-	return result.LastInsertId()
-}
-
-// InsertAttemptQuestion persists one position in an attempt's pick-order.
-func (q *SQLQuizSessionQueries) InsertAttemptQuestion(attemptID int64, questionID, position int) error {
-	_, err := q.db.Exec(
-		`INSERT INTO quiz_attempt_questions (attempt_id, question_id, position) VALUES (?, ?, ?)`,
-		attemptID, questionID, position,
-	)
-	return err
-}
-
-// GetAttemptByUUID loads a quiz_attempts row by its public uuid. Returns
-// sql.ErrNoRows (unmodified) if it doesn't exist.
-func (q *SQLQuizSessionQueries) GetAttemptByUUID(attemptUUID string) (attemptID, ownerID int, completedAt sql.NullTime, err error) {
-	err = q.db.QueryRow(
-		"SELECT id, user_id, completed_at FROM quiz_attempts WHERE uuid = ?",
-		attemptUUID,
-	).Scan(&attemptID, &ownerID, &completedAt)
-	return
-}
-
-// TotalQuestions returns how many questions an attempt has in its pick-order.
-func (q *SQLQuizSessionQueries) TotalQuestions(attemptID int) (int, error) {
-	var total int
-	err := q.db.QueryRow("SELECT COUNT(*) FROM quiz_attempt_questions WHERE attempt_id = ?", attemptID).Scan(&total)
-	return total, err
-}
-
-// AnsweredCount returns how many questions an attempt has answered or skipped.
-func (q *SQLQuizSessionQueries) AnsweredCount(attemptID int) (int, error) {
-	var count int
-	err := q.db.QueryRow("SELECT COUNT(*) FROM quiz_attempt_answers WHERE attempt_id = ?", attemptID).Scan(&count)
-	return count, err
-}
-
-// QuestionIDAtPosition returns the question_id at a given position in an
-// attempt's pick-order.
-func (q *SQLQuizSessionQueries) QuestionIDAtPosition(attemptID, position int) (int, error) {
-	var questionID int
-	err := q.db.QueryRow(
-		"SELECT question_id FROM quiz_attempt_questions WHERE attempt_id = ? AND position = ?",
-		attemptID, position,
-	).Scan(&questionID)
-	return questionID, err
-}
-
 // LoadQuestionDelivery returns the raw scanned fields needed to build a
-// correctness-stripped question delivery payload; the caller strips the
-// "explanation" key out of content itself (that's a pure JSON transform,
-// not a query concern).
-func (q *SQLQuizSessionQueries) LoadQuestionDelivery(questionID int, lang string) (uuid, qType, prompt, content string, difficulty int, err error) {
+// correctness-stripped question delivery payload.
+func (q *RedisQuizSessionQueries) LoadQuestionDelivery(questionID int, lang string) (uuid, qType, prompt, content string, difficulty int, err error) {
 	err = q.db.QueryRow(`
 		SELECT q.uuid, q.type, q.difficulty, qt.prompt, qt.content
 		FROM questions q
@@ -187,30 +461,9 @@ func (q *SQLQuizSessionQueries) LoadQuestionDelivery(questionID int, lang string
 	return
 }
 
-// QuestionAtPosition returns the question at an attempt's given position,
-// for answer validation.
-func (q *SQLQuizSessionQueries) QuestionAtPosition(attemptID, position int) (questionID int, questionUUID, qType, answerKey string, err error) {
-	err = q.db.QueryRow(`
-		SELECT q.id, q.uuid, q.type, q.answer_key
-		FROM quiz_attempt_questions qaq
-		JOIN questions q ON q.id = qaq.question_id
-		WHERE qaq.attempt_id = ? AND qaq.position = ?
-	`, attemptID, position).Scan(&questionID, &questionUUID, &qType, &answerKey)
-	return
-}
-
-// InsertAnswer records a graded (or skipped) answer.
-func (q *SQLQuizSessionQueries) InsertAnswer(attemptID, questionID int, response string, correct, skipped bool) error {
-	_, err := q.db.Exec(
-		`INSERT INTO quiz_attempt_answers (attempt_id, question_id, response, correct, skipped) VALUES (?, ?, ?, ?, ?)`,
-		attemptID, questionID, response, correct, skipped,
-	)
-	return err
-}
-
 // ReinforcementContent returns a question's translated content blob, for
 // pulling out its optional explanation.
-func (q *SQLQuizSessionQueries) ReinforcementContent(questionID int, lang string) (string, error) {
+func (q *RedisQuizSessionQueries) ReinforcementContent(questionID int, lang string) (string, error) {
 	var content string
 	err := q.db.QueryRow(
 		"SELECT content FROM question_translations WHERE question_id = ? AND lang = ?",
@@ -221,7 +474,7 @@ func (q *SQLQuizSessionQueries) ReinforcementContent(questionID int, lang string
 
 // ReinforcementPostPaths returns every post linked to a question via
 // question_posts.
-func (q *SQLQuizSessionQueries) ReinforcementPostPaths(questionID int) ([]string, error) {
+func (q *RedisQuizSessionQueries) ReinforcementPostPaths(questionID int) ([]string, error) {
 	rows, err := q.db.Query(`
 		SELECT p.path_identifier
 		FROM question_posts qp
@@ -242,52 +495,4 @@ func (q *SQLQuizSessionQueries) ReinforcementPostPaths(questionID int) ([]string
 		postPaths = append(postPaths, path)
 	}
 	return postPaths, rows.Err()
-}
-
-// CountCorrectAnswers returns how many of an attempt's answers were correct.
-func (q *SQLQuizSessionQueries) CountCorrectAnswers(attemptID int) (int, error) {
-	var correctCount int
-	err := q.db.QueryRow(
-		"SELECT COUNT(*) FROM quiz_attempt_answers WHERE attempt_id = ? AND correct = 1",
-		attemptID,
-	).Scan(&correctCount)
-	return correctCount, err
-}
-
-// MarkAttemptCompleted finalizes an attempt's score.
-func (q *SQLQuizSessionQueries) MarkAttemptCompleted(attemptID int, score int, passed bool) error {
-	_, err := q.db.Exec(
-		"UPDATE quiz_attempts SET completed_at = CURRENT_TIMESTAMP, score = ?, passed = ? WHERE id = ?",
-		score, passed, attemptID,
-	)
-	return err
-}
-
-// ReviewPostPaths aggregates the reinforcement posts of every missed
-// (wrong or skipped) answer in an attempt, deduped, ordered by when the
-// miss happened.
-func (q *SQLQuizSessionQueries) ReviewPostPaths(attemptID int) ([]string, error) {
-	rows, err := q.db.Query(`
-		SELECT p.path_identifier
-		FROM quiz_attempt_answers qaa
-		JOIN question_posts qp ON qp.question_id = qaa.question_id
-		JOIN posts p ON p.id = qp.post_id
-		WHERE qaa.attempt_id = ? AND qaa.correct = 0
-		GROUP BY p.path_identifier
-		ORDER BY MIN(qaa.id)
-	`, attemptID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	paths := []string{}
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			return nil, err
-		}
-		paths = append(paths, path)
-	}
-	return paths, rows.Err()
 }

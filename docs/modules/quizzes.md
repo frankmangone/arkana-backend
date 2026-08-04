@@ -33,28 +33,24 @@ vocabulary.
 link more than one post; reinforcement after a wrong/skipped answer
 surfaces every linked post, not a single "primary" one.
 
-`quiz_attempts`:
-
-| Column         | Type      | Notes                                                        |
-|----------------|-----------|-----------------------------------------------------------------|
-| `id`           | INTEGER   | Primary key, internal only.                                     |
-| `uuid`         | TEXT      | Unique. Opaque public identifier.                                |
-| `module_id`    | INTEGER   | FK `reading_list_modules(id)`.                                   |
-| `user_id`      | INTEGER   | FK `users(id)` — JWT-authenticated user, not the (dormant) wallet system. |
-| `tier`         | TEXT      | `standard` or `certificate` (CHECK-constrained). Certificate-tier grading/issuance is not implemented. |
-| `started_at`   | TIMESTAMP |                                                                   |
-| `completed_at` | TIMESTAMP | Nullable — set by `POST .../complete`.                           |
-| `score`        | INTEGER   | Nullable, 0-100, set on complete.                                |
-| `passed`       | BOOLEAN   | Nullable, set on complete (`score/100 >= passThreshold`).        |
-
-`quiz_attempt_questions` — `(attempt_id, question_id, position)`,
-`PRIMARY KEY (attempt_id, position)`. Persists the selector's full
-pick-order for one attempt at `Start()` time — every later `next`/`answer`
-call is a lookup against this table, never a re-run of selection.
-
-`quiz_attempt_answers` — one row per `(attempt_id, question_id)`
-(`UNIQUE`): `response` (JSON, literal `"null"` when skipped), `correct`
-(always `false` when skipped), `skipped` (BOOLEAN).
+`quiz_attempts`, `quiz_attempt_questions`, and `quiz_attempt_answers` are
+**not** SQL tables - attempt/session state is ephemeral and lives in
+Redis instead, one JSON blob per attempt at `quiz:attempt:{uuid}` plus a
+small resume-index key `quiz:active-attempt:{userID}:{moduleID}`. Both
+keys carry a 2-hour TTL that slides forward on every read or write
+(`Start`, `Next`, `Answer`, `Complete` all touch it) - an actively-used
+attempt never expires mid-session, while an abandoned one cleans itself
+up 2 hours after the last interaction. On `Complete`, the attempt blob
+itself is not special-cased - it keeps sliding on the same TTL like any
+other read/write - but the resume-index key is actively deleted at
+completion time rather than left to expire, which is what stops a
+completed attempt from being "resumed". That authoritative check is now
+also enforced directly inside `FindActiveAttemptUUID` itself (it loads
+the attempt and refuses to return one with `completed_at` set)
+regardless of whether the index-key deletion succeeded, so a single
+failed `Del` can never resurrect a finished attempt as resumable. See
+[docs/superpowers/specs/2026-08-03-quiz-attempts-redis-design.md](../superpowers/specs/2026-08-03-quiz-attempts-redis-design.md)
+for the full design.
 
 ## Config
 
@@ -62,7 +58,13 @@ Reuses `ADMIN_HMAC_SECRET` (same admin HMAC middleware as
 `posts`/`tags`/`readinglists`/`writers` — see
 [docs/modules/subscriptions.md](subscriptions.md#config)) for
 `POST /api/admin/questions`, and the existing JWT setup from
-`features/auth` for every session route. No new env vars.
+`features/auth` for every session route.
+
+One new env var, `REDIS_ADDR`, backs the attempt/session storage
+described above — defaults to `localhost:3334` for local dev (matching
+`docker-compose.yml`'s port mapping), but must be set explicitly in
+production. See [DEPLOYMENT.md](../../DEPLOYMENT.md#redis-required) —
+the API fails to start without a reachable Redis.
 
 Two implementation constants live in `features/quizzes/services` as Go
 `const`, not config: `questionsPerAttempt = 8` (how many questions

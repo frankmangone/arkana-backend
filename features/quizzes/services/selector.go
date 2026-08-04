@@ -12,8 +12,9 @@ import (
 // it to change what it serves next - no interface change needed either
 // way, and Start() only ever calls this in a tight loop within a single
 // request, so nothing here needs to be deterministic across separate
-// calls (persistence into quiz_attempt_questions is what provides
-// consistency across the life of an attempt, not the selector itself).
+// calls (persistence of the pick-order into the attempt blob's Questions
+// field is what provides consistency across the life of an attempt, not
+// the selector itself).
 type QuestionSelector interface {
 	Next(pool []models.Question, history []models.AnsweredQuestion) (question *models.Question, done bool)
 }

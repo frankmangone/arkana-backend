@@ -37,7 +37,7 @@ func setupQuizRouter(t *testing.T, db *sql.DB) *mux.Router {
 	adminAuth := adminauth.NewAdminAuthMiddleware(testAdminSecret)
 	auth := middlewares.NewAuthMiddleware(testJWTSecret)
 	questions := services.NewQuestionService(db, &fakePostChecker{}, &fakeTagChecker{})
-	sessions := services.NewQuizSessionService(db)
+	sessions := services.NewQuizSessionService(db, setupTestRedis(t))
 	handlers.RegisterRoutes(router, questions, sessions, auth, adminAuth)
 	return router
 }
