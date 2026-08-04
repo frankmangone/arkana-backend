@@ -56,7 +56,7 @@ func Load() *Config {
 		MeiliHost:      getEnv("MEILI_HOST", "http://localhost:7700"),
 		MeiliMasterKey: getEnv("MEILI_MASTER_KEY", ""),
 
-		RedisAddr: getEnv("REDIS_ADDR", "localhost:3334"),
+		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 
 		FrontendURL:             getEnv("FRONTEND_URL", "http://localhost:5173"),
 		ResendAPIKey:            getEnv("RESEND_API_KEY", ""),
