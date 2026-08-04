@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -51,14 +52,14 @@ func main() {
 	r := router.Setup(db, cfg, redisClient)
 
 	srv := &http.Server{
-		Addr:              ":8082",
+		Addr:              fmt.Sprintf(":%s", cfg.ApiPort),
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start server in a goroutine
 	go func() {
-		log.Println("Server listening on :8082")
+		log.Println(fmt.Sprintf("Server listening on :%s", cfg.ApiPort))
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatal(err)
 		}

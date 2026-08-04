@@ -9,6 +9,7 @@ import (
 
 // Config holds application configuration
 type Config struct {
+	ApiPort           string `env:"API_PORT"`
 	DatabasePath      string `validate:"required" env:"DATABASE_PATH"`
 	CORSAllowedOrigin string `env:"CORS_ALLOWED_ORIGIN"`
 
@@ -40,6 +41,7 @@ type Config struct {
 // Load loads configuration from environment variables
 func Load() *Config {
 	return &Config{
+		ApiPort:           getEnv("API_PORT", "8082"),
 		DatabasePath:      getEnv("DATABASE_PATH", "blog.db"),
 		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", "*"),
 
