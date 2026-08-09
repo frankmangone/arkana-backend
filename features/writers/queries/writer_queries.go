@@ -9,6 +9,7 @@ import (
 
 type WriterQueries interface {
 	GetBySlug(slug string) (*models.WriterResponse, error)
+	GetIDBySlug(slug string) (int64, error)
 	ListAll() ([]models.WriterResponse, error)
 	List() ([]models.WriterSummary, error)
 }
@@ -42,6 +43,19 @@ func (q *SQLWriterQueries) GetBySlug(slug string) (*models.WriterResponse, error
 	}
 
 	return &resp, nil
+}
+
+// GetIDBySlug returns a writer's internal id by slug, regardless of
+// visibility - for internal linking (e.g. resolving a post's author to
+// writers.id), not public-facing lookups. Returns sql.ErrNoRows
+// (unmodified) if no writer has that slug.
+func (q *SQLWriterQueries) GetIDBySlug(slug string) (int64, error) {
+	var id int64
+	err := q.db.QueryRow(`SELECT id FROM writers WHERE slug = ?`, slug).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // ListAll returns the full profile for every writer that has a slug,

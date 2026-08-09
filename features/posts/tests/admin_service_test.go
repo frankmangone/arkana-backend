@@ -41,6 +41,22 @@ func (f *fakeTagChecker) MissingTags(slugs []string) ([]string, error) {
 	return f.missing, nil
 }
 
+// fakeWriterResolver resolves the given author slugs to fixed writer ids;
+// any other slug is reported as not found, mirroring a real WriterService
+// backed by an empty/partial writers table.
+type fakeWriterResolver struct {
+	ids map[string]int64
+}
+
+func newFakeWriterResolver() *fakeWriterResolver {
+	return &fakeWriterResolver{ids: map[string]int64{"test-writer": 1}}
+}
+
+func (f *fakeWriterResolver) GetIDBySlug(slug string) (int64, bool, error) {
+	id, ok := f.ids[slug]
+	return id, ok, nil
+}
+
 func getPostContent(t *testing.T, db *sql.DB, lang, path string) (title, thumbnail, content sql.NullString, found bool) {
 	t.Helper()
 	err := db.QueryRow(
@@ -56,17 +72,27 @@ func getPostContent(t *testing.T, db *sql.DB, lang, path string) (title, thumbna
 	return title, thumbnail, content, true
 }
 
+func getPostWriterID(t *testing.T, db *sql.DB, path string) sql.NullInt64 {
+	t.Helper()
+	var writerID sql.NullInt64
+	if err := db.QueryRow("SELECT writer_id FROM posts WHERE path_identifier = ?", path).Scan(&writerID); err != nil {
+		t.Fatal(err)
+	}
+	return writerID
+}
+
 func TestAdminPostServicePublish(t *testing.T) {
-	t.Run("parses frontmatter, stores the full raw content, and indexes the stripped body", func(t *testing.T) {
+	t.Run("parses frontmatter, stores the full raw content, links the writer, and indexes the stripped body", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
 		indexer := &fakeIndexer{}
-		adminSvc := services.NewAdminPostService(db, postSvc, indexer, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, indexer, &fakeTagChecker{}, newFakeWriterResolver())
 
 		raw := "---\n" +
 			"title: Hashing 101\n" +
 			"thumbnail: https://example.com/thumb.png\n" +
 			"description: a post about hashing\n" +
+			"author: test-writer\n" +
 			"tags:\n  - crypto\n  - hashing\n" +
 			"---\n" +
 			"# Hashing\n\nSome **bold** body content.\n"
@@ -94,6 +120,11 @@ func TestAdminPostServicePublish(t *testing.T) {
 			t.Errorf("content = %q, want the full raw content (frontmatter preserved)", content.String)
 		}
 
+		writerID := getPostWriterID(t, db, "cryptography-101/hashing")
+		if !writerID.Valid || writerID.Int64 != 1 {
+			t.Errorf("writer_id = %v, want 1 (resolved from author: test-writer)", writerID)
+		}
+
 		if len(indexer.calls) != 1 {
 			t.Fatalf("len(indexer.calls) = %d, want 1", len(indexer.calls))
 		}
@@ -112,36 +143,33 @@ func TestAdminPostServicePublish(t *testing.T) {
 		}
 	})
 
-	t.Run("handles content with no frontmatter", func(t *testing.T) {
+	t.Run("rejects content with no frontmatter (no author to resolve)", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/no-frontmatter",
 			Lang:       "en",
 			RawContent: "Just a body, no frontmatter.\n",
 		})
-		if err != nil {
-			t.Fatal(err)
+		if !errors.Is(err, services.ErrMissingAuthor) {
+			t.Fatalf("err = %v, want ErrMissingAuthor", err)
 		}
 
-		_, _, content, found := getPostContent(t, db, "en", "cryptography-101/no-frontmatter.md")
-		if !found {
-			t.Fatal("expected a post_contents row")
-		}
-		if content.String != "Just a body, no frontmatter.\n" {
-			t.Errorf("content = %q, want the original content unchanged", content.String)
+		_, _, _, found := getPostContent(t, db, "en", "cryptography-101/no-frontmatter.md")
+		if found {
+			t.Error("expected no post_contents row to be written on validation failure")
 		}
 	})
 
 	t.Run("re-publishing the same path/lang updates the existing row instead of duplicating", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
 
-		v1 := "---\ntitle: V1\n---\nv1 content\n"
-		v2 := "---\ntitle: V2\n---\nv2 content\n"
+		v1 := "---\ntitle: V1\nauthor: test-writer\n---\nv1 content\n"
+		v2 := "---\ntitle: V2\nauthor: test-writer\n---\nv2 content\n"
 
 		input := services.PublishInput{Path: "cryptography-101/republish", Lang: "en", RawContent: v1}
 		if err := adminSvc.Publish(input); err != nil {
@@ -171,10 +199,10 @@ func TestAdminPostServicePublish(t *testing.T) {
 	t.Run("reuses the same posts row across languages", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
 
-		en := services.PublishInput{Path: "cryptography-101/multilang", Lang: "en", RawContent: "---\ntitle: EN\n---\nen content\n"}
-		es := services.PublishInput{Path: "cryptography-101/multilang", Lang: "es", RawContent: "---\ntitle: ES\n---\nes content\n"}
+		en := services.PublishInput{Path: "cryptography-101/multilang", Lang: "en", RawContent: "---\ntitle: EN\nauthor: test-writer\n---\nen content\n"}
+		es := services.PublishInput{Path: "cryptography-101/multilang", Lang: "es", RawContent: "---\ntitle: ES\nauthor: test-writer\n---\nes content\n"}
 		if err := adminSvc.Publish(en); err != nil {
 			t.Fatal(err)
 		}
@@ -195,9 +223,9 @@ func TestAdminPostServicePublish(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
 		indexer := &fakeIndexer{failErr: errors.New("meilisearch down")}
-		adminSvc := services.NewAdminPostService(db, postSvc, indexer, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, indexer, &fakeTagChecker{}, newFakeWriterResolver())
 
-		err := adminSvc.Publish(services.PublishInput{Path: "cryptography-101/fails", Lang: "en", RawContent: "---\ntitle: T\n---\nC\n"})
+		err := adminSvc.Publish(services.PublishInput{Path: "cryptography-101/fails", Lang: "en", RawContent: "---\ntitle: T\nauthor: test-writer\n---\nC\n"})
 		if err == nil {
 			t.Fatal("expected an error when indexing fails")
 		}
@@ -206,7 +234,7 @@ func TestAdminPostServicePublish(t *testing.T) {
 	t.Run("propagates a frontmatter parse failure", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/bad-frontmatter",
@@ -224,7 +252,7 @@ func TestAdminPostServicePublishTagValidation(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
 		tagChecker := &fakeTagChecker{missing: []string{"nonexistentTag"}}
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, tagChecker)
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, tagChecker, newFakeWriterResolver())
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/bad-tag",
@@ -248,12 +276,12 @@ func TestAdminPostServicePublishTagValidation(t *testing.T) {
 	t.Run("publishing with no tags in frontmatter succeeds without querying tag existence", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{missing: []string{"anything"}})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{missing: []string{"anything"}}, newFakeWriterResolver())
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/no-tags",
 			Lang:       "en",
-			RawContent: "---\ntitle: T\n---\nbody\n",
+			RawContent: "---\ntitle: T\nauthor: test-writer\n---\nbody\n",
 		})
 		if err != nil {
 			t.Fatalf("expected success (no tags to validate), got: %v", err)
@@ -263,15 +291,59 @@ func TestAdminPostServicePublishTagValidation(t *testing.T) {
 	t.Run("publishing with all tags registered succeeds", func(t *testing.T) {
 		db := setupTestDB(t)
 		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
-		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{})
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
 
 		err := adminSvc.Publish(services.PublishInput{
 			Path:       "cryptography-101/good-tags",
 			Lang:       "en",
-			RawContent: "---\ntitle: T\ntags:\n  - cryptography\n  - hashing\n---\nbody\n",
+			RawContent: "---\ntitle: T\nauthor: test-writer\ntags:\n  - cryptography\n  - hashing\n---\nbody\n",
 		})
 		if err != nil {
 			t.Fatalf("expected success, got: %v", err)
+		}
+	})
+}
+
+func TestAdminPostServicePublishAuthorValidation(t *testing.T) {
+	t.Run("rejects publishing when frontmatter has no author field", func(t *testing.T) {
+		db := setupTestDB(t)
+		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
+
+		err := adminSvc.Publish(services.PublishInput{
+			Path:       "cryptography-101/no-author",
+			Lang:       "en",
+			RawContent: "---\ntitle: T\n---\nbody\n",
+		})
+		if !errors.Is(err, services.ErrMissingAuthor) {
+			t.Errorf("err = %v, want ErrMissingAuthor", err)
+		}
+
+		var count int
+		db.QueryRow("SELECT COUNT(*) FROM post_contents WHERE path = 'cryptography-101/no-author.md'").Scan(&count)
+		if count != 0 {
+			t.Errorf("post_contents row count = %d, want 0 (nothing written on validation failure)", count)
+		}
+	})
+
+	t.Run("rejects publishing when the author slug has no matching writer", func(t *testing.T) {
+		db := setupTestDB(t)
+		postSvc := services.NewPostService(db, notifservices.NewNotificationService(db))
+		adminSvc := services.NewAdminPostService(db, postSvc, &fakeIndexer{}, &fakeTagChecker{}, newFakeWriterResolver())
+
+		err := adminSvc.Publish(services.PublishInput{
+			Path:       "cryptography-101/unknown-author",
+			Lang:       "en",
+			RawContent: "---\ntitle: T\nauthor: nonexistent-writer\n---\nbody\n",
+		})
+		if !errors.Is(err, services.ErrUnknownAuthor) {
+			t.Errorf("err = %v, want ErrUnknownAuthor", err)
+		}
+
+		var count int
+		db.QueryRow("SELECT COUNT(*) FROM post_contents WHERE path = 'cryptography-101/unknown-author.md'").Scan(&count)
+		if count != 0 {
+			t.Errorf("post_contents row count = %d, want 0 (nothing written on validation failure)", count)
 		}
 	})
 }

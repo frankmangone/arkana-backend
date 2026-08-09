@@ -33,7 +33,7 @@ func TestPublishHandler(t *testing.T) {
 		body, _ := json.Marshal(models.PublishPostRequest{
 			Path:       "cryptography-101/handler-test",
 			Lang:       "en",
-			RawContent: "---\ntitle: Handler Test\n---\nsome content\n",
+			RawContent: "---\ntitle: Handler Test\nauthor: test-writer\n---\nsome content\n",
 		})
 		headers := signAdminRequest(testAdminSecret, body)
 		req := httptest.NewRequest("POST", "/api/admin/posts", bytes.NewReader(body))

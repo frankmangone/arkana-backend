@@ -38,7 +38,7 @@ func (h *AdminPostHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		RawContent: req.RawContent,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrUnknownTags) {
+		if errors.Is(err, services.ErrUnknownTags) || errors.Is(err, services.ErrMissingAuthor) || errors.Is(err, services.ErrUnknownAuthor) {
 			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}

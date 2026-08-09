@@ -11,6 +11,7 @@ type PostQueries interface {
 	GetByPath(path string) (*models.Post, error)
 	InsertPost(path string) (int64, error)
 	GetByID(id int) (*models.Post, error)
+	SetWriterID(postID int, writerID int64) error
 	MissingPaths(paths []string) ([]string, error)
 	GetIDsByPaths(paths []string) (map[string]int, error)
 	LikeExists(postID, userID int) (bool, error)
@@ -64,6 +65,13 @@ func (q *SQLPostQueries) InsertPost(path string) (int64, error) {
 		return 0, err
 	}
 	return result.LastInsertId()
+}
+
+// SetWriterID sets posts.writer_id for postID, linking the post to a
+// writer so post_liked/post_commented notifications can be routed.
+func (q *SQLPostQueries) SetWriterID(postID int, writerID int64) error {
+	_, err := q.db.Exec("UPDATE posts SET writer_id = ? WHERE id = ?", writerID, postID)
+	return err
 }
 
 // GetByID finds a post by its id.

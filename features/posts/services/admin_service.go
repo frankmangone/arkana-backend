@@ -22,7 +22,18 @@ type TagChecker interface {
 	MissingTags(slugs []string) ([]string, error)
 }
 
+// WriterResolver resolves a frontmatter author slug to a writer's internal
+// id, for linking published posts to their writer so post_liked/
+// post_commented notifications can be routed. Satisfied structurally by
+// *writers/services.WriterService, without this package depending on it
+// directly.
+type WriterResolver interface {
+	GetIDBySlug(slug string) (id int64, found bool, err error)
+}
+
 var ErrUnknownTags = errors.New("unknown tag(s)")
+var ErrMissingAuthor = errors.New("post is missing required frontmatter field: author")
+var ErrUnknownAuthor = errors.New("unknown author")
 
 // PublishInput is the raw content for one (post, language) pair, coming
 // straight from a CI publish workflow with no pre-processing - frontmatter
@@ -43,21 +54,24 @@ type AdminPostService struct {
 	posts   *PostService
 	indexer PostIndexer
 	tags    TagChecker
+	writers WriterResolver
 }
 
 // NewAdminPostService constructs an AdminPostService backed by db, composing
-// posts for posts-row access, indexer for search indexing, and tags for tag
-// validation.
-func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer, tags TagChecker) *AdminPostService {
-	return &AdminPostService{db: db, queries: queries.NewSQLAdminPostQueries(db), posts: posts, indexer: indexer, tags: tags}
+// posts for posts-row access, indexer for search indexing, tags for tag
+// validation, and writers for resolving a post's author to a writer.
+func NewAdminPostService(db *sql.DB, posts *PostService, indexer PostIndexer, tags TagChecker, writers WriterResolver) *AdminPostService {
+	return &AdminPostService{db: db, queries: queries.NewSQLAdminPostQueries(db), posts: posts, indexer: indexer, tags: tags, writers: writers}
 }
 
-// Publish parses RawContent's frontmatter for title/thumbnail/description/tags,
-// upserts the posts/post_contents rows for one (path, lang) with the full
-// raw content (frontmatter included, since pull-content.js writes this
-// column's value out verbatim as the served .md file), and indexes a
-// search-stripped version of the body into search. Re-publishing the same
-// path/lang updates the existing row rather than duplicating it.
+// Publish parses RawContent's frontmatter for
+// title/thumbnail/description/tags/author, resolves author to a writer and
+// links it via posts.writer_id (so post_liked/post_commented notifications
+// can be routed), upserts the posts/post_contents rows for one (path, lang)
+// with the full raw content (frontmatter included, since pull-content.js
+// writes this column's value out verbatim as the served .md file), and
+// indexes a search-stripped version of the body into search. Re-publishing
+// the same path/lang updates the existing row rather than duplicating it.
 func (s *AdminPostService) Publish(input PublishInput) error {
 	frontmatter, body, err := parseFrontmatter(input.RawContent)
 	if err != nil {
@@ -68,6 +82,7 @@ func (s *AdminPostService) Publish(input PublishInput) error {
 	thumbnail := frontmatterString(frontmatter, "thumbnail")
 	description := frontmatterString(frontmatter, "description")
 	tags := frontmatterStringSlice(frontmatter, "tags")
+	author := frontmatterString(frontmatter, "author")
 
 	if len(tags) > 0 {
 		if missing, err := s.tags.MissingTags(tags); err != nil {
@@ -77,8 +92,23 @@ func (s *AdminPostService) Publish(input PublishInput) error {
 		}
 	}
 
+	if author == "" {
+		return fmt.Errorf("%w (path %q)", ErrMissingAuthor, input.Path)
+	}
+	writerID, found, err := s.writers.GetIDBySlug(author)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("%w: %q (path %q)", ErrUnknownAuthor, author, input.Path)
+	}
+
 	post, err := s.posts.GetOrCreateByPath(input.Path)
 	if err != nil {
+		return err
+	}
+
+	if err := s.posts.SetWriterID(post.ID, writerID); err != nil {
 		return err
 	}
 

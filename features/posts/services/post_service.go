@@ -60,6 +60,12 @@ func (s *PostService) GetOrCreateByPath(path string) (*models.Post, error) {
 	return s.queries.GetByID(int(id))
 }
 
+// SetWriterID links postID to writerID, so post_liked/post_commented
+// notifications on that post can be routed to the writer's account.
+func (s *PostService) SetWriterID(postID int, writerID int64) error {
+	return s.queries.SetWriterID(postID, writerID)
+}
+
 // MissingPaths returns the subset of paths that have no row in posts, for
 // publish-time validation by other features.
 func (s *PostService) MissingPaths(paths []string) ([]string, error) {

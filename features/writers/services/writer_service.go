@@ -38,6 +38,20 @@ func (s *WriterService) GetBySlug(slug string) (*models.WriterResponse, error) {
 	return resp, nil
 }
 
+// GetIDBySlug resolves a writer's internal id by slug, regardless of
+// visibility - for internal linking (not public-facing profile lookups).
+// found is false if no writer has that slug.
+func (s *WriterService) GetIDBySlug(slug string) (id int64, found bool, err error) {
+	id, err = s.queries.GetIDBySlug(slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
 // ListAll returns the full profile for every writer that has a slug,
 // regardless of visibility.
 func (s *WriterService) ListAll() ([]models.WriterResponse, error) {

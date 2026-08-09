@@ -8,6 +8,7 @@ import (
 	"arkana/features/posts/services"
 	searchservices "arkana/features/search/services"
 	tagservices "arkana/features/tags/services"
+	writerservices "arkana/features/writers/services"
 	"arkana/shared/adminauth"
 	"database/sql"
 
@@ -21,7 +22,8 @@ func Initialize(router *mux.Router, db *sql.DB, cfg *config.Config, auth *middle
 
 	searchService := searchservices.NewSearchService(db, cfg.MeiliHost, cfg.MeiliMasterKey)
 	tagService := tagservices.NewTagService(db)
-	adminPostService := services.NewAdminPostService(db, postService, searchService, tagService)
+	writerService := writerservices.NewWriterService(db)
+	adminPostService := services.NewAdminPostService(db, postService, searchService, tagService, writerService)
 
 	handlers.RegisterRoutes(router, postService, commentService, adminPostService, auth, adminAuth)
 }

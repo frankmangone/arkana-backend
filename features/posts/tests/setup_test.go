@@ -210,7 +210,7 @@ func setupRouterWithTagChecker(t *testing.T, db *sql.DB, tagChecker services.Tag
 	notifSvc := notifservices.NewNotificationService(db)
 	ps := services.NewPostService(db, notifSvc)
 	cs := services.NewCommentService(db, notifSvc)
-	adminSvc := services.NewAdminPostService(db, ps, &fakeIndexer{}, tagChecker)
+	adminSvc := services.NewAdminPostService(db, ps, &fakeIndexer{}, tagChecker, newFakeWriterResolver())
 	handlers.RegisterRoutes(router, ps, cs, adminSvc, auth, adminAuth)
 	return router
 }
