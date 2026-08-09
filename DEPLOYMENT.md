@@ -56,9 +56,8 @@ missing Redis crash-loops the entire API, not just the quiz endpoints.
 auto-deploys on push to `main`, so merging without Redis already
 provisioned takes the whole API down.
 
-- Install/run a Redis instance reachable from the VPS - e.g.
-  `apt install redis-server`, or a Docker container. Bind it to
-  localhost only; no auth needed for a localhost-only bind.
+- Install/run Redis on the VPS - see `arkana-infra/bootstrap/redis.md` for the
+  shared setup (this repo only needs it reachable at the address below).
 - Add `Environment=REDIS_ADDR=127.0.0.1:6379` (or an `EnvironmentFile=`
   pointing at a file containing that line) to the `[Service]` block of
   the systemd unit above.
@@ -70,5 +69,7 @@ provisioned takes the whole API down.
 ## Notes
 
 - SQLite is embedded in the Go binary (no separate installation needed)
-- Ensure `.db` file is in `/home/api` or adjust WorkingDirectory
-- nginx already configured to proxy `/api/*` to your backend
+- Ensure `.db` file is in `/home/api` or adjust WorkingDirectory - see
+  `arkana-infra/operations/backups.md` for the backup procedure for this file
+- nginx already configured to proxy `/api/*` to your backend - see
+  `arkana-infra/services/nginx.md` for the shared nginx config

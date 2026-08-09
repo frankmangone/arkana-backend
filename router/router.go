@@ -5,6 +5,7 @@ import (
 	"arkana/features/auth"
 	"arkana/features/notifications"
 	"arkana/features/posts"
+	"arkana/features/questionflags"
 	"arkana/features/quizzes"
 	"arkana/features/readinglists"
 	"arkana/features/search"
@@ -28,6 +29,7 @@ func Setup(db *sql.DB, cfg *config.Config, redisClient *redis.Client) *mux.Route
 	adminAuthMiddleware := adminauth.NewAdminAuthMiddleware(cfg.AdminHMACSecret)
 
 	posts.Initialize(router, db, cfg, authMiddleware, adminAuthMiddleware)
+	questionflags.Initialize(router, db, adminAuthMiddleware, authMiddleware)
 	quizzes.Initialize(router, db, redisClient, adminAuthMiddleware, authMiddleware)
 	readinglists.Initialize(router, db, adminAuthMiddleware)
 	search.Initialize(router, db, cfg)
